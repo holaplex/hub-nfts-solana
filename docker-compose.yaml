@@ -1,0 +1,30 @@
+version: '3.8'
+services:
+  db:
+    image: postgres:15.1
+    env_file:
+      - .env
+    ports:
+      - 5440:5432
+    volumes: 
+      - holaplex_nfts_solana:/var/lib/postgresql/data
+  redpanda:
+    image: docker.redpanda.com/vectorized/redpanda:v22.3.6
+    command:
+      - redpanda start
+      - --smp 1
+      - --overprovisioned
+      - --node-id 0
+      - --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+      - --pandaproxy-addr 0.0.0.0:8082
+      - --advertise-pandaproxy-addr localhost:8082
+    ports:
+      - 8081:8081
+      - 8082:8082
+      - 9092:9092
+      - 9644:9644
+      - 29092:29092
+volumes:
+  holaplex_nfts_solana:
+    driver: local

@@ -1,0 +1,71 @@
+name: Cargo test
+on:
+  push:
+    branches:
+      - main
+      - release
+  pull_request:
+    branches:
+      - "**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Cargo Test
+    runs-on: amd64
+
+    services:
+      postgres:
+        image: postgres:14.1
+
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: ci
+
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y && \
+          sudo apt-get install -y --no-install-recommends \
+            cmake \
+            g++ \
+            libsasl2-dev \
+            libssl-dev \
+            libudev-dev \
+            pkg-config \
+            protobuf-compiler
+
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+            toolchain: 1.69.0
+            override: true
+            components: cargo, rustc
+
+      - uses: tespkg/actions-cache@v1
+        with:
+          accessKey: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          secretKey: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          bucket: ${{ vars.AWS_BUCKET }}
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ github.event.repository.name }}-${{ runner.arch }}-cargo-test-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+
+      - name: cargo test
+        uses: actions-rs/cargo@v1
+        env:
+          DATABASE_URL: postgres://ci:ci@127.0.0.1:5432/ci
+        with:
+          command: test

@@ -1,0 +1,9 @@
+[[schemas]]
+subject = "nfts"
+version = 1
+sha512 = "10338b46a4d2caa2e1a22d1a7c62eb9d9b3465dd457cdbc12837cc2b2d0ca25099a4723ae3cc26e4eb41871866ee9957deffdf90f4fa2b3e9dfe667aa3fe09c3"
+
+[[schemas]]
+subject = "solana_nfts"
+version = 1
+sha512 = "9a2997e0ceb89f6bc609cc9d0b6f0d1b2b1ae9ab2eced4a99156a444a4f407af14e9aa14c80fbe2df104ae464908bc84d0728b960ba98ff7cdb251cfd5d02209"

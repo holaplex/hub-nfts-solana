@@ -1,0 +1,600 @@
+use holaplex_hub_nfts_solana_entity::{collection_mints, collections};
+use hub_core::{anyhow::Result, clap, prelude::*, uuid::Uuid};
+use mpl_token_metadata::{
+    instruction::{mint_new_edition_from_master_edition_via_token, update_metadata_accounts_v2},
+    state::{Creator, DataV2, EDITION, PREFIX},
+};
+use solana_client::rpc_client::RpcClient;
+use solana_program::{program_pack::Pack, pubkey::Pubkey, system_instruction::create_account};
+use solana_sdk::signer::{keypair::Keypair, Signer};
+use spl_associated_token_account::{
+    get_associated_token_address, instruction::create_associated_token_account,
+};
+use spl_token::{
+    instruction::{initialize_mint, mint_to},
+    state,
+};
+
+use crate::proto::{
+    Creator as ProtoCreator, MasterEdition, MetaplexMasterEditionTransaction,
+    MintMetaplexEditionTransaction, TransferMetaplexAssetTransaction,
+};
+
+const TOKEN_PROGRAM_PUBKEY: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+
+#[derive(Debug, clap::Args, Clone)]
+pub struct SolanaArgs {
+    #[arg(long, env)]
+    pub solana_endpoint: String,
+
+    #[arg(long, env)]
+    pub solana_keypair_path: String,
+}
+
+#[derive(Clone)]
+pub struct CreateEditionRequest {
+    pub collection: Uuid,
+    pub recipient: String,
+    pub owner_address: String,
+    pub edition: u64,
+}
+
+#[derive(Clone)]
+pub struct UpdateEditionRequest {
+    pub collection: Uuid,
+    pub owner_address: String,
+    pub seller_fee_basis_points: Option<u16>,
+    pub name: String,
+    pub symbol: String,
+    pub uri: String,
+    pub creators: Vec<Creator>,
+}
+
+#[derive(Clone)]
+pub struct TransferAssetRequest {
+    pub sender: String,
+    pub recipient: String,
+    pub mint_address: String,
+}
+
+#[derive(Clone)]
+pub struct MasterEditionAddresses {
+    pub metadata: Pubkey,
+    pub associated_token_account: Pubkey,
+    pub owner: Pubkey,
+    pub master_edition: Pubkey,
+    pub mint: Pubkey,
+    pub update_authority: Pubkey,
+}
+
+#[derive(Clone)]
+pub struct MintEditionAddresses {
+    pub edition: Pubkey,
+    pub mint: Pubkey,
+    pub metadata: Pubkey,
+    pub owner: Pubkey,
+    pub associated_token_account: Pubkey,
+}
+
+#[derive(Clone)]
+pub struct UpdateMasterEditionAddresses {
+    pub metadata: Pubkey,
+    pub update_authority: Pubkey,
+}
+
+#[derive(Clone)]
+pub struct TransferAssetAddresses {
+    pub owner: Pubkey,
+    pub recipient: Pubkey,
+    pub recipient_associated_token_account: Pubkey,
+    pub owner_associated_token_account: Pubkey,
+}
+
+/// Represents a response from a transaction on the blockchain. This struct
+/// provides the serialized message and the signatures of the signed message.
+pub struct TransactionResponse<A> {
+    /// The serialized version of the message from the transaction.
+    pub serialized_message: Vec<u8>,
+
+    /// The signatures of the signed message from the transaction.
+    pub signed_message_signatures: Vec<String>,
+
+    pub addresses: A,
+}
+
+#[derive(Clone)]
+pub struct Solana {
+    rpc_client: Arc<RpcClient>,
+    payer_keypair: Vec<u8>,
+}
+
+impl Solana {
+    pub fn new(rpc_client: Arc<RpcClient>, payer_keypair: Vec<u8>) -> Self {
+        Self {
+            rpc_client,
+            payer_keypair,
+        }
+    }
+
+    /// Res
+    ///
+    /// # Errors
+    /// This function fails if unable to assemble or save solana drop
+    pub async fn create(
+        &self,
+        payload: MetaplexMasterEditionTransaction,
+    ) -> Result<TransactionResponse<MasterEditionAddresses>> {
+        let MetaplexMasterEditionTransaction {
+            project_id,
+            collection_id,
+            master_edition,
+        } = payload;
+        let rpc = &self.rpc_client;
+
+        let payer = Keypair::from_bytes(&self.payer_keypair)?;
+        let master_edition = master_edition.ok_or(anyhow!("master edition not found"))?;
+
+        let tx = self.master_edition_transaction(master_edition)?;
+
+        Ok(tx)
+    }
+
+    /// Res
+    ///
+    /// # Errors
+    /// This function fails if unable to assemble solana mint transaction
+    pub async fn mint(
+        &self,
+        collection: collections::Model,
+        payload: MintMetaplexEditionTransaction,
+    ) -> Result<TransactionResponse<MintEditionAddresses>> {
+        let rpc = &self.rpc_client;
+        let MintMetaplexEditionTransaction {
+            recipient_address,
+            owner_address,
+            edition,
+            ..
+        } = payload;
+
+        let payer = Keypair::from_bytes(&self.payer_keypair)?;
+        let owner = owner_address.parse()?;
+
+        let program_pubkey = mpl_token_metadata::id();
+        let master_edition_pubkey: Pubkey = collection.master_edition.parse()?;
+        let master_edition_mint: Pubkey = collection.mint.parse()?;
+        let existing_token_account: Pubkey = collection.associated_token_account.parse()?;
+        let metadata: Pubkey = collection.metadata.parse()?;
+        let recipient: Pubkey = recipient_address.parse()?;
+        let edition = edition.try_into()?;
+
+        let token_key = Pubkey::from_str(TOKEN_PROGRAM_PUBKEY)?;
+
+        let new_mint_key = Keypair::new();
+        let new_mint_pubkey = new_mint_key.pubkey();
+        let added_token_account = get_associated_token_address(&recipient, &new_mint_key.pubkey());
+        let new_mint_pub = new_mint_key.pubkey();
+        let edition_seeds = &[
+            PREFIX.as_bytes(),
+            program_pubkey.as_ref(),
+            new_mint_pub.as_ref(),
+            EDITION.as_bytes(),
+        ];
+        let (edition_key, _) = Pubkey::find_program_address(edition_seeds, &program_pubkey);
+
+        let metadata_seeds = &[
+            PREFIX.as_bytes(),
+            program_pubkey.as_ref(),
+            new_mint_pub.as_ref(),
+        ];
+        let (metadata_key, _) = Pubkey::find_program_address(metadata_seeds, &program_pubkey);
+
+        let mut instructions = vec![
+            create_account(
+                &payer.pubkey(),
+                &new_mint_key.pubkey(),
+                rpc.get_minimum_balance_for_rent_exemption(state::Mint::LEN)?,
+                state::Mint::LEN as u64,
+                &token_key,
+            ),
+            initialize_mint(&token_key, &new_mint_key.pubkey(), &owner, Some(&owner), 0)?,
+            create_associated_token_account(
+                &payer.pubkey(),
+                &recipient,
+                &new_mint_pubkey,
+                &spl_token::ID,
+            ),
+            mint_to(
+                &token_key,
+                &new_mint_pubkey,
+                &added_token_account,
+                &owner,
+                &[&owner],
+                1,
+            )?,
+        ];
+
+        instructions.push(mint_new_edition_from_master_edition_via_token(
+            program_pubkey,
+            metadata_key,
+            edition_key,
+            master_edition_pubkey,
+            new_mint_pubkey,
+            owner,
+            payer.pubkey(),
+            owner,
+            existing_token_account,
+            owner,
+            metadata,
+            master_edition_mint,
+            edition,
+        ));
+
+        let blockhash = rpc.get_latest_blockhash()?;
+
+        let message = solana_program::message::Message::new_with_blockhash(
+            &instructions,
+            Some(&payer.pubkey()),
+            &blockhash,
+        );
+
+        let serialized_message = message.serialize();
+        let mint_signature = new_mint_key.try_sign_message(&message.serialize())?;
+        let payer_signature = payer.try_sign_message(&message.serialize())?;
+
+        Ok(TransactionResponse {
+            serialized_message,
+            signed_message_signatures: vec![
+                payer_signature.to_string(),
+                mint_signature.to_string(),
+            ],
+            addresses: MintEditionAddresses {
+                owner,
+                edition: edition_key,
+                mint: new_mint_pubkey,
+                metadata: metadata_key,
+                associated_token_account: added_token_account,
+            },
+        })
+    }
+
+    pub async fn update(
+        &self,
+        collection: collections::Model,
+        payload: MetaplexMasterEditionTransaction,
+    ) -> Result<TransactionResponse<UpdateMasterEditionAddresses>> {
+        let rpc = &self.rpc_client;
+
+        let MetaplexMasterEditionTransaction {
+            project_id,
+            collection_id,
+            master_edition,
+        } = payload;
+
+        let payer = Keypair::from_bytes(&self.payer_keypair)?;
+        let master_edition = master_edition.ok_or(anyhow!("master edition not found"))?;
+
+        let MasterEdition {
+            name,
+            seller_fee_basis_points,
+            symbol,
+            creators,
+            metadata_uri,
+            ..
+        } = master_edition;
+
+        let payer = Keypair::from_bytes(&self.payer_keypair)?;
+
+        let program_pubkey = mpl_token_metadata::id();
+        let update_authority: Pubkey = master_edition.owner_address.parse()?;
+        let metadata: Pubkey = collection.metadata.parse()?;
+
+        let ins = update_metadata_accounts_v2(
+            program_pubkey,
+            metadata,
+            update_authority,
+            None,
+            Some(DataV2 {
+                name,
+                symbol,
+                uri: metadata_uri,
+                seller_fee_basis_points: seller_fee_basis_points.try_into()?,
+                creators: Some(
+                    creators
+                        .into_iter()
+                        .map(TryInto::try_into)
+                        .collect::<Result<Vec<Creator>>>()?,
+                ),
+                collection: None,
+                uses: None,
+            }),
+            None,
+            None,
+        );
+
+        let blockhash = rpc.get_latest_blockhash()?;
+
+        let message = solana_program::message::Message::new_with_blockhash(
+            &[ins],
+            Some(&payer.pubkey()),
+            &blockhash,
+        );
+
+        let serialized_message = message.serialize();
+        let payer_signature = payer.try_sign_message(&message.serialize())?;
+
+        Ok(TransactionResponse {
+            serialized_message,
+            signed_message_signatures: vec![payer_signature.to_string()],
+            addresses: UpdateMasterEditionAddresses {
+                metadata,
+                update_authority,
+            },
+        })
+    }
+
+    pub async fn transfer(
+        &self,
+        collection_mint: collection_mints::Model,
+        payload: TransferMetaplexAssetTransaction,
+    ) -> Result<TransactionResponse<TransferAssetAddresses>> {
+        let rpc = &self.rpc_client;
+        let TransferMetaplexAssetTransaction {
+            owner_address,
+            recipient_address,
+            ..
+        } = payload;
+
+        let sender: Pubkey = owner_address.parse()?;
+        let recipient: Pubkey = recipient_address.parse()?;
+        let mint_address: Pubkey = collection_mint.mint.parse()?;
+        let payer = Keypair::from_bytes(&self.payer_keypair)?;
+        let blockhash = rpc.get_latest_blockhash()?;
+        let source_ata = get_associated_token_address(&sender, &mint_address);
+        let destination_ata = get_associated_token_address(&recipient, &mint_address);
+
+        let create_ata_token_account = create_associated_token_account(
+            &payer.pubkey(),
+            &recipient,
+            &mint_address,
+            &spl_token::ID,
+        );
+
+        let transfer_instruction = spl_token::instruction::transfer(
+            &spl_token::ID,
+            &source_ata,
+            &destination_ata,
+            &sender,
+            &[&sender],
+            1,
+        )
+        .context("Failed to create transfer instruction")?;
+
+        let close_ata = spl_token::instruction::close_account(
+            &spl_token::ID,
+            &source_ata,
+            &payer.pubkey(),
+            &sender,
+            &[&sender],
+        )?;
+
+        let message = solana_program::message::Message::new_with_blockhash(
+            &[create_ata_token_account, transfer_instruction, close_ata],
+            Some(&payer.pubkey()),
+            &blockhash,
+        );
+
+        let serialized_message = message.serialize();
+        let payer_signature = payer.try_sign_message(&message.serialize())?;
+
+        Ok(TransactionResponse {
+            serialized_message,
+            signed_message_signatures: vec![payer_signature.to_string()],
+            addresses: TransferAssetAddresses {
+                owner: sender,
+                recipient,
+                recipient_associated_token_account: destination_ata,
+                owner_associated_token_account: source_ata,
+            },
+        })
+    }
+
+    // #[allow(clippy::too_many_lines)]
+
+    // async fn retry_drop(&self, request: RetryDropRequest) -> Result<(Pubkey, TransactionResponse)> {
+    //     let rpc = &self.rpc_client;
+    //     let conn = self.db.get();
+
+    //     let RetryDropRequest { collection } = request;
+
+    //     let solana_collection = solana_collections::Entity::find()
+    //         .filter(solana_collections::Column::CollectionId.eq(collection.id))
+    //         .one(conn)
+    //         .await?
+    //         .context("solana collection not found")?;
+    //     let metadata_json = MetadataJsons::find_by_id(collection.id)
+    //         .one(conn)
+    //         .await?
+    //         .context("metadata json not found")?;
+    //     let creators = CollectionCreators::find()
+    //         .filter(collection_creators::Column::CollectionId.eq(collection.id))
+    //         .all(conn)
+    //         .await?
+    //         .into_iter()
+    //         .map(TryInto::try_into)
+    //         .collect::<Result<Vec<Creator>>>()?;
+
+    //     let payer = Keypair::from_bytes(&self.payer_keypair)?;
+    //     let owner = solana_collection.owner_pubkey.parse()?;
+
+    //     let (mint, master_edition, ata, metadata, tx) =
+    //         create_drop_transaction(rpc, &payer, &owner, &collection, &metadata_json, &creators)?;
+
+    //     // update solana collection record
+    //     let mut sc: solana_collections::ActiveModel = solana_collection.into();
+    //     sc.master_edition_address = Set(master_edition.to_string());
+    //     sc.ata_pubkey = Set(ata.to_string());
+    //     sc.mint_pubkey = Set(mint.to_string());
+    //     sc.metadata_pubkey = Set(metadata.to_string());
+
+    //     sc.update(conn).await?;
+
+    //     Ok((mint, tx))
+    // }
+
+    fn master_edition_transaction(
+        &self,
+        payload: MasterEdition,
+    ) -> Result<TransactionResponse<MasterEditionAddresses>> {
+        let payer = Keypair::from_bytes(&self.payer_keypair)?;
+        let rpc = &self.rpc_client;
+        let mint = Keypair::new();
+        let MasterEdition {
+            name,
+            symbol,
+            seller_fee_basis_points,
+            metadata_uri,
+            creators,
+            supply,
+            owner_address,
+        } = payload;
+        let owner: Pubkey = owner_address.parse()?;
+
+        let (metadata, _) = Pubkey::find_program_address(
+            &[
+                b"metadata",
+                mpl_token_metadata::ID.as_ref(),
+                mint.pubkey().as_ref(),
+            ],
+            &mpl_token_metadata::ID,
+        );
+        let associated_token_account = get_associated_token_address(&owner, &mint.pubkey());
+        let (master_edition, _) = Pubkey::find_program_address(
+            &[
+                b"metadata",
+                mpl_token_metadata::ID.as_ref(),
+                mint.pubkey().as_ref(),
+                b"edition",
+            ],
+            &mpl_token_metadata::ID,
+        );
+        let len = spl_token::state::Mint::LEN;
+        let rent = rpc.get_minimum_balance_for_rent_exemption(len)?;
+        let blockhash = rpc.get_latest_blockhash()?;
+
+        let create_account_ins = solana_program::system_instruction::create_account(
+            &payer.pubkey(),
+            &mint.pubkey(),
+            rent,
+            len.try_into()?,
+            &spl_token::ID,
+        );
+        let initialize_mint_ins = spl_token::instruction::initialize_mint(
+            &spl_token::ID,
+            &mint.pubkey(),
+            &owner,
+            Some(&owner),
+            0,
+        )?;
+        let ata_ins = spl_associated_token_account::instruction::create_associated_token_account(
+            &payer.pubkey(),
+            &owner,
+            &mint.pubkey(),
+            &spl_token::ID,
+        );
+        let min_to_ins = spl_token::instruction::mint_to(
+            &spl_token::ID,
+            &mint.pubkey(),
+            &associated_token_account,
+            &owner,
+            &[],
+            1,
+        )?;
+        let create_metadata_account_ins =
+            mpl_token_metadata::instruction::create_metadata_accounts_v3(
+                mpl_token_metadata::ID,
+                metadata,
+                mint.pubkey(),
+                owner,
+                payer.pubkey(),
+                owner,
+                name,
+                symbol,
+                metadata_uri,
+                Some(
+                    creators
+                        .into_iter()
+                        .map(TryInto::try_into)
+                        .collect::<Result<Vec<Creator>, _>>()?,
+                ),
+                seller_fee_basis_points.try_into()?,
+                true,
+                true,
+                None,
+                None,
+                None,
+            );
+        let create_master_edition_ins = mpl_token_metadata::instruction::create_master_edition_v3(
+            mpl_token_metadata::ID,
+            master_edition,
+            mint.pubkey(),
+            owner,
+            owner,
+            metadata,
+            payer.pubkey(),
+            supply.map(TryInto::try_into).transpose()?,
+        );
+        let instructions = vec![
+            create_account_ins,
+            initialize_mint_ins,
+            ata_ins,
+            min_to_ins,
+            create_metadata_account_ins,
+            create_master_edition_ins,
+        ];
+
+        let message = solana_program::message::Message::new_with_blockhash(
+            &instructions,
+            Some(&payer.pubkey()),
+            &blockhash,
+        );
+
+        let serialized_message = message.serialize();
+        let mint_signature = mint.try_sign_message(&message.serialize())?;
+        let payer_signature = payer.try_sign_message(&message.serialize())?;
+
+        Ok(TransactionResponse {
+            serialized_message,
+            signed_message_signatures: vec![
+                payer_signature.to_string(),
+                mint_signature.to_string(),
+            ],
+            addresses: MasterEditionAddresses {
+                master_edition,
+                update_authority: owner,
+                associated_token_account,
+                mint: mint.pubkey(),
+                owner,
+                metadata,
+            },
+        })
+    }
+}
+
+impl TryFrom<ProtoCreator> for Creator {
+    type Error = Error;
+
+    fn try_from(
+        ProtoCreator {
+            address,
+            verified,
+            share,
+            ..
+        }: ProtoCreator,
+    ) -> Result<Self> {
+        Ok(Self {
+            address: address.parse()?,
+            verified,
+            share: share.try_into()?,
+        })
+    }
+}

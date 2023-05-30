@@ -1,0 +1,36 @@
+[package]
+name = "holaplex-hub-nfts-solana"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+build = "build.rs"
+
+[lib]
+
+[dependencies]
+prost = "0.11.6"
+serde = { version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.93"
+solana-program = "1.14.8"
+solana-client = "1.14.8"
+spl-token = "3.5.0"
+solana-sdk = "1.14.8"
+spl-associated-token-account = "1.1.2"
+mpl-token-metadata = "1.8.3"
+holaplex-hub-nfts-solana-core = { path = "../core" }
+holaplex-hub-nfts-solana-entity = { path = "../entity" }
+
+[dependencies.hub-core]
+package = "holaplex-hub-core"
+version = "0.2.0"
+git = "https://github.com/holaplex/hub-core"
+branch = "stable"
+features = ["kafka"]
+
+[build-dependencies.hub-core-build]
+package = "holaplex-hub-core-build"
+version = "0.2.0"
+git = "https://github.com/holaplex/hub-core"
+branch = "stable"

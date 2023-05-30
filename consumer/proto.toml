@@ -1,0 +1,6 @@
+[registry]
+endpoint = "http://localhost:8081"
+
+[schemas]
+nfts = 1
+solana_nfts = 1
