@@ -6,7 +6,11 @@ use mpl_token_metadata::{
 };
 use solana_client::rpc_client::RpcClient;
 use solana_program::{program_pack::Pack, pubkey::Pubkey, system_instruction::create_account};
-use solana_sdk::signer::{keypair::Keypair, Signer};
+use solana_sdk::{
+    signature::Signature,
+    signer::{keypair::Keypair, Signer},
+    transaction::Transaction,
+};
 use spl_associated_token_account::{
     get_associated_token_address, instruction::create_associated_token_account,
 };
@@ -16,8 +20,9 @@ use spl_token::{
 };
 
 use crate::proto::{
-    Creator as ProtoCreator, MasterEdition, MetaplexMasterEditionTransaction,
-    MintMetaplexEditionTransaction, TransferMetaplexAssetTransaction,
+    treasury_events::SolanaSignedTransaction, Creator as ProtoCreator, MasterEdition,
+    MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction,
+    TransferMetaplexAssetTransaction,
 };
 
 const TOKEN_PROGRAM_PUBKEY: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
@@ -116,6 +121,31 @@ impl Solana {
         }
     }
 
+    pub fn rpc(&self) -> Arc<RpcClient> {
+        self.rpc_client.clone()
+    }
+
+    pub fn submit_transaction(&self, transaction: SolanaSignedTransaction) -> Result<String> {
+        let signatures = transaction
+            .signed_message_signatures
+            .iter()
+            .map(|s| {
+                Signature::from_str(s)
+                    .map_err(|e| anyhow!(format!("failed to parse signature: {e}")))
+            })
+            .collect::<Result<Vec<Signature>>>()?;
+
+        let message = bincode::deserialize(&transaction.serialized_message)?;
+
+        let transaction = Transaction {
+            signatures,
+            message,
+        };
+
+        let signature = self.rpc().send_and_confirm_transaction(&transaction)?;
+        Ok(signature.to_string())
+    }
+
     /// Res
     ///
     /// # Errors
@@ -124,14 +154,7 @@ impl Solana {
         &self,
         payload: MetaplexMasterEditionTransaction,
     ) -> Result<TransactionResponse<MasterEditionAddresses>> {
-        let MetaplexMasterEditionTransaction {
-            project_id,
-            collection_id,
-            master_edition,
-        } = payload;
-        let rpc = &self.rpc_client;
-
-        let payer = Keypair::from_bytes(&self.payer_keypair)?;
+        let MetaplexMasterEditionTransaction { master_edition, .. } = payload;
         let master_edition = master_edition.ok_or(anyhow!("master edition not found"))?;
 
         let tx = self.master_edition_transaction(master_edition)?;
@@ -264,13 +287,8 @@ impl Solana {
     ) -> Result<TransactionResponse<UpdateMasterEditionAddresses>> {
         let rpc = &self.rpc_client;
 
-        let MetaplexMasterEditionTransaction {
-            project_id,
-            collection_id,
-            master_edition,
-        } = payload;
+        let MetaplexMasterEditionTransaction { master_edition, .. } = payload;
 
-        let payer = Keypair::from_bytes(&self.payer_keypair)?;
         let master_edition = master_edition.ok_or(anyhow!("master edition not found"))?;
 
         let MasterEdition {
@@ -588,7 +606,6 @@ impl TryFrom<ProtoCreator> for Creator {
             address,
             verified,
             share,
-            ..
         }: ProtoCreator,
     ) -> Result<Self> {
         Ok(Self {

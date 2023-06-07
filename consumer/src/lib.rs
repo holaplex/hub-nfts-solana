@@ -7,16 +7,19 @@ pub mod solana;
 
 use holaplex_hub_nfts_solana_core::db::DbArgs;
 use hub_core::{clap, consumer::RecvError, prelude::*};
+use solana::SolanaArgs;
 
 #[allow(clippy::pedantic)]
 pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/nfts.proto.rs"));
     include!(concat!(env!("OUT_DIR"), "/solana_nfts.proto.rs"));
+    include!(concat!(env!("OUT_DIR"), "/treasury.proto.rs"));
 }
 
 #[derive(Debug)]
 pub enum Services {
     Nfts(proto::NftEventKey, proto::SolanaEvents),
+    Treasury(proto::TreasuryEventKey, proto::TreasuryEvents),
 }
 
 impl hub_core::producer::Message for proto::SolanaNftEvents {
@@ -24,7 +27,7 @@ impl hub_core::producer::Message for proto::SolanaNftEvents {
 }
 
 impl hub_core::consumer::MessageGroup for Services {
-    const REQUESTED_TOPICS: &'static [&'static str] = &["hub-nfts"];
+    const REQUESTED_TOPICS: &'static [&'static str] = &["hub-nfts", "hub-treasuries"];
 
     fn from_message<M: hub_core::consumer::Message>(msg: &M) -> Result<Self, RecvError> {
         let topic = msg.topic();
@@ -40,6 +43,12 @@ impl hub_core::consumer::MessageGroup for Services {
 
                 Ok(Services::Nfts(key, val))
             },
+            "hub-treasuries" => {
+                let key = proto::TreasuryEventKey::decode(key)?;
+                let val = proto::TreasuryEvents::decode(val)?;
+
+                Ok(Services::Treasury(key, val))
+            },
             t => Err(RecvError::BadTopic(t.into())),
         }
     }
@@ -50,4 +59,7 @@ impl hub_core::consumer::MessageGroup for Services {
 pub struct Args {
     #[command(flatten)]
     pub db: DbArgs,
+
+    #[command(flatten)]
+    pub solana: SolanaArgs,
 }

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-pub use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use hub_core::{anyhow::Result, clap, prelude::*};
+pub use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 
 /// Arguments for establishing a database connection
 #[derive(Debug, clap::Args)]

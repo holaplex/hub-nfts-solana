@@ -1,23 +1,9 @@
-use holaplex_hub_nfts_solana::{
-    events::Processor,
-    solana::{Solana, SolanaArgs},
-    Services, proto,
-};
-use holaplex_hub_nfts_solana_core::db::{Connection, DbArgs};
-use hub_core::{clap, prelude::*, tokio};
+use std::{fs::File, sync::Arc};
+
+use holaplex_hub_nfts_solana::{events::Processor, proto, solana::Solana, Args, Services};
+use holaplex_hub_nfts_solana_core::db::Connection;
+use hub_core::{prelude::*, tokio};
 use solana_client::rpc_client::RpcClient;
-use std::fs::File;
-use std::sync::Arc;
-
-#[derive(Debug, clap::Args)]
-#[command(version, author, about)]
-pub struct Args {
-    #[command(flatten)]
-    pub db: DbArgs,
-
-    #[command(flatten)]
-    pub solana: SolanaArgs,
-}
 
 pub fn main() {
     let opts = hub_core::StartConfig {
