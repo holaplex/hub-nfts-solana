@@ -2,6 +2,7 @@
 
 use sea_orm::entity::prelude::*;
 
+// TODO: ensure collection mint is updated by indexer when transfer instruction processed by the indexer
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Default)]
 #[sea_orm(table_name = "collection_mints")]
 pub struct Model {

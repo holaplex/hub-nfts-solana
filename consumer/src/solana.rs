@@ -1,5 +1,7 @@
+use std::vec;
+
 use holaplex_hub_nfts_solana_entity::{collection_mints, collections};
-use hub_core::{anyhow::Result, clap, prelude::*, uuid::Uuid};
+use hub_core::{anyhow::Result, clap, prelude::*, thiserror::Error, uuid::Uuid};
 use mpl_token_metadata::{
     instruction::{mint_new_edition_from_master_edition_via_token, update_metadata_accounts_v2},
     state::{Creator, DataV2, EDITION, PREFIX},
@@ -20,7 +22,7 @@ use spl_token::{
 };
 
 use crate::proto::{
-    treasury_events::SolanaSignedTransaction, Creator as ProtoCreator, MasterEdition,
+    treasury_events::SolanaSignedTxn, Creator as ProtoCreator, MasterEdition,
     MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction,
     TransferMetaplexAssetTransaction,
 };
@@ -33,7 +35,7 @@ pub struct SolanaArgs {
     pub solana_endpoint: String,
 
     #[arg(long, env)]
-    pub solana_keypair_path: String,
+    pub solana_treasury_wallet_address: String,
 }
 
 #[derive(Clone)]
@@ -104,20 +106,30 @@ pub struct TransactionResponse<A> {
     /// The signatures of the signed message from the transaction.
     pub signed_message_signatures: Vec<String>,
 
+    /// The public address of wallets that should sign the message.
+    pub request_signatures: Vec<String>,
+
+    /// Addresses that are related to the transaction.
     pub addresses: A,
+}
+
+#[derive(Debug, Error)]
+enum SolanaError {
+    #[error("master edition message not found")]
+    MasterEditionMessageNotFound,
 }
 
 #[derive(Clone)]
 pub struct Solana {
     rpc_client: Arc<RpcClient>,
-    payer_keypair: Vec<u8>,
+    treasury_wallet_address: String,
 }
 
 impl Solana {
-    pub fn new(rpc_client: Arc<RpcClient>, payer_keypair: Vec<u8>) -> Self {
+    pub fn new(rpc_client: Arc<RpcClient>, treasury_wallet_address: String) -> Self {
         Self {
             rpc_client,
-            payer_keypair,
+            treasury_wallet_address,
         }
     }
 
@@ -125,7 +137,7 @@ impl Solana {
         self.rpc_client.clone()
     }
 
-    pub fn submit_transaction(&self, transaction: SolanaSignedTransaction) -> Result<String> {
+    pub fn submit_transaction(&self, transaction: SolanaSignedTxn) -> Result<String> {
         let signatures = transaction
             .signed_message_signatures
             .iter()
@@ -143,6 +155,7 @@ impl Solana {
         };
 
         let signature = self.rpc().send_and_confirm_transaction(&transaction)?;
+
         Ok(signature.to_string())
     }
 
@@ -155,7 +168,7 @@ impl Solana {
         payload: MetaplexMasterEditionTransaction,
     ) -> Result<TransactionResponse<MasterEditionAddresses>> {
         let MetaplexMasterEditionTransaction { master_edition, .. } = payload;
-        let master_edition = master_edition.ok_or(anyhow!("master edition not found"))?;
+        let master_edition = master_edition.ok_or(SolanaError::MasterEditionMessageNotFound)?;
 
         let tx = self.master_edition_transaction(master_edition)?;
 
@@ -179,7 +192,7 @@ impl Solana {
             ..
         } = payload;
 
-        let payer = Keypair::from_bytes(&self.payer_keypair)?;
+        let payer: Pubkey = self.treasury_wallet_address.parse()?;
         let owner = owner_address.parse()?;
 
         let program_pubkey = mpl_token_metadata::id();
@@ -213,19 +226,14 @@ impl Solana {
 
         let mut instructions = vec![
             create_account(
-                &payer.pubkey(),
+                &payer,
                 &new_mint_key.pubkey(),
                 rpc.get_minimum_balance_for_rent_exemption(state::Mint::LEN)?,
                 state::Mint::LEN as u64,
                 &token_key,
             ),
             initialize_mint(&token_key, &new_mint_key.pubkey(), &owner, Some(&owner), 0)?,
-            create_associated_token_account(
-                &payer.pubkey(),
-                &recipient,
-                &new_mint_pubkey,
-                &spl_token::ID,
-            ),
+            create_associated_token_account(&payer, &recipient, &new_mint_pubkey, &spl_token::ID),
             mint_to(
                 &token_key,
                 &new_mint_pubkey,
@@ -243,7 +251,7 @@ impl Solana {
             master_edition_pubkey,
             new_mint_pubkey,
             owner,
-            payer.pubkey(),
+            payer,
             owner,
             existing_token_account,
             owner,
@@ -256,20 +264,17 @@ impl Solana {
 
         let message = solana_program::message::Message::new_with_blockhash(
             &instructions,
-            Some(&payer.pubkey()),
+            Some(&payer),
             &blockhash,
         );
 
         let serialized_message = message.serialize();
         let mint_signature = new_mint_key.try_sign_message(&message.serialize())?;
-        let payer_signature = payer.try_sign_message(&message.serialize())?;
 
         Ok(TransactionResponse {
             serialized_message,
-            signed_message_signatures: vec![
-                payer_signature.to_string(),
-                mint_signature.to_string(),
-            ],
+            signed_message_signatures: vec![mint_signature.to_string()],
+            request_signatures: vec![payer.to_string()],
             addresses: MintEditionAddresses {
                 owner,
                 edition: edition_key,
@@ -289,7 +294,7 @@ impl Solana {
 
         let MetaplexMasterEditionTransaction { master_edition, .. } = payload;
 
-        let master_edition = master_edition.ok_or(anyhow!("master edition not found"))?;
+        let master_edition = master_edition.ok_or(SolanaError::MasterEditionMessageNotFound)?;
 
         let MasterEdition {
             name,
@@ -300,7 +305,7 @@ impl Solana {
             ..
         } = master_edition;
 
-        let payer = Keypair::from_bytes(&self.payer_keypair)?;
+        let payer: Pubkey = self.treasury_wallet_address.parse()?;
 
         let program_pubkey = mpl_token_metadata::id();
         let update_authority: Pubkey = master_edition.owner_address.parse()?;
@@ -331,18 +336,15 @@ impl Solana {
 
         let blockhash = rpc.get_latest_blockhash()?;
 
-        let message = solana_program::message::Message::new_with_blockhash(
-            &[ins],
-            Some(&payer.pubkey()),
-            &blockhash,
-        );
+        let message =
+            solana_program::message::Message::new_with_blockhash(&[ins], Some(&payer), &blockhash);
 
         let serialized_message = message.serialize();
-        let payer_signature = payer.try_sign_message(&message.serialize())?;
 
         Ok(TransactionResponse {
             serialized_message,
-            signed_message_signatures: vec![payer_signature.to_string()],
+            signed_message_signatures: vec![],
+            request_signatures: vec![payer.to_string()],
             addresses: UpdateMasterEditionAddresses {
                 metadata,
                 update_authority,
@@ -365,17 +367,13 @@ impl Solana {
         let sender: Pubkey = owner_address.parse()?;
         let recipient: Pubkey = recipient_address.parse()?;
         let mint_address: Pubkey = collection_mint.mint.parse()?;
-        let payer = Keypair::from_bytes(&self.payer_keypair)?;
+        let payer: Pubkey = self.treasury_wallet_address.parse()?;
         let blockhash = rpc.get_latest_blockhash()?;
         let source_ata = get_associated_token_address(&sender, &mint_address);
         let destination_ata = get_associated_token_address(&recipient, &mint_address);
 
-        let create_ata_token_account = create_associated_token_account(
-            &payer.pubkey(),
-            &recipient,
-            &mint_address,
-            &spl_token::ID,
-        );
+        let create_ata_token_account =
+            create_associated_token_account(&payer, &recipient, &mint_address, &spl_token::ID);
 
         let transfer_instruction = spl_token::instruction::transfer(
             &spl_token::ID,
@@ -385,28 +383,28 @@ impl Solana {
             &[&sender],
             1,
         )
-        .context("Failed to create transfer instruction")?;
+        .context("failed to create transfer instruction")?;
 
         let close_ata = spl_token::instruction::close_account(
             &spl_token::ID,
             &source_ata,
-            &payer.pubkey(),
+            &payer,
             &sender,
             &[&sender],
         )?;
 
         let message = solana_program::message::Message::new_with_blockhash(
             &[create_ata_token_account, transfer_instruction, close_ata],
-            Some(&payer.pubkey()),
+            Some(&payer),
             &blockhash,
         );
 
         let serialized_message = message.serialize();
-        let payer_signature = payer.try_sign_message(&message.serialize())?;
 
         Ok(TransactionResponse {
             serialized_message,
-            signed_message_signatures: vec![payer_signature.to_string()],
+            signed_message_signatures: vec![],
+            request_signatures: vec![payer.to_string()],
             addresses: TransferAssetAddresses {
                 owner: sender,
                 recipient,
@@ -463,7 +461,7 @@ impl Solana {
         &self,
         payload: MasterEdition,
     ) -> Result<TransactionResponse<MasterEditionAddresses>> {
-        let payer = Keypair::from_bytes(&self.payer_keypair)?;
+        let payer: Pubkey = self.treasury_wallet_address.parse()?;
         let rpc = &self.rpc_client;
         let mint = Keypair::new();
         let MasterEdition {
@@ -500,7 +498,7 @@ impl Solana {
         let blockhash = rpc.get_latest_blockhash()?;
 
         let create_account_ins = solana_program::system_instruction::create_account(
-            &payer.pubkey(),
+            &payer,
             &mint.pubkey(),
             rent,
             len.try_into()?,
@@ -514,7 +512,7 @@ impl Solana {
             0,
         )?;
         let ata_ins = spl_associated_token_account::instruction::create_associated_token_account(
-            &payer.pubkey(),
+            &payer,
             &owner,
             &mint.pubkey(),
             &spl_token::ID,
@@ -533,7 +531,7 @@ impl Solana {
                 metadata,
                 mint.pubkey(),
                 owner,
-                payer.pubkey(),
+                payer,
                 owner,
                 name,
                 symbol,
@@ -558,7 +556,7 @@ impl Solana {
             owner,
             owner,
             metadata,
-            payer.pubkey(),
+            payer,
             supply.map(TryInto::try_into).transpose()?,
         );
         let instructions = vec![
@@ -572,20 +570,17 @@ impl Solana {
 
         let message = solana_program::message::Message::new_with_blockhash(
             &instructions,
-            Some(&payer.pubkey()),
+            Some(&payer),
             &blockhash,
         );
 
         let serialized_message = message.serialize();
         let mint_signature = mint.try_sign_message(&message.serialize())?;
-        let payer_signature = payer.try_sign_message(&message.serialize())?;
 
         Ok(TransactionResponse {
             serialized_message,
-            signed_message_signatures: vec![
-                payer_signature.to_string(),
-                mint_signature.to_string(),
-            ],
+            signed_message_signatures: vec![mint_signature.to_string()],
+            request_signatures: vec![payer.to_string()],
             addresses: MasterEditionAddresses {
                 master_edition,
                 update_authority: owner,

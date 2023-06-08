@@ -1,4 +1,4 @@
-use std::{fs::File, sync::Arc};
+use std::sync::Arc;
 
 use holaplex_hub_nfts_solana::{events::Processor, proto, solana::Solana, Args, Services};
 use holaplex_hub_nfts_solana_core::db::Connection;
@@ -24,11 +24,7 @@ pub fn main() {
                 .await?;
 
             let solana_rpc = Arc::new(RpcClient::new(solana.solana_endpoint));
-            let f = File::open(solana.solana_keypair_path).expect("unable to locate keypair file");
-            let solana_keypair: Vec<u8> =
-                serde_json::from_reader(f).expect("unable to read keypair bytes from the file");
-
-            let solana = Solana::new(solana_rpc, solana_keypair);
+            let solana = Solana::new(solana_rpc, solana.solana_treasury_wallet_address);
 
             let cons = common.consumer_cfg.build::<Services>().await?;
             let event_processor = Processor::new(solana, connection, producer);

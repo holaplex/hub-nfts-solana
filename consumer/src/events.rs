@@ -8,19 +8,17 @@ use crate::{
             CreateDrop, MintDrop, RetryDrop, RetryMintDrop, TransferAsset, UpdateDrop,
         },
         solana_nft_events::Event::{
-            CreateDropSubmitted, MintDropSubmitted, RetryCreateDropSubmitted,
-            RetryMintDropSubmitted, SignCreateDrop, SignMintDrop, SignTransferAsset,
-            SignUpdateDrop, TransferAssetSubmitted, UpdateDropSubmitted,
+            CreateDropSigningRequested, CreateDropSubmitted, MintDropSigningRequested,
+            MintDropSubmitted, RetryCreateDropSubmitted, RetryMintDropSubmitted,
+            TransferAssetSigningRequested, TransferAssetSubmitted, UpdateDropSigningRequested,
+            UpdateDropSubmitted,
         },
-        treasury_events::{
-            signed_transaction::Transaction, signed_transaction_event::Event, Event::MessageSigned,
-            SignedTransaction, SignedTransactionEvent,
-        },
+        treasury_events::Event as TreasuryEvent,
         MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction, NftEventKey,
-        SolanaNftEventKey, SolanaNftEvents, SolanaTransaction, SolanaTransactionResponse,
-        TransferMetaplexAssetTransaction, TreasuryEventKey, TreasuryEvents,
+        SolanaCompletedTransaction, SolanaNftEventKey, SolanaNftEvents, SolanaPendingTransaction,
+        TransferMetaplexAssetTransaction, TreasuryEventKey,
     },
-    solana::{MasterEditionAddresses, Solana},
+    solana::{MasterEditionAddresses, Solana, TransactionResponse},
     Services,
 };
 
@@ -55,115 +53,74 @@ impl Processor {
     pub async fn process(&self, msg: Services) -> Result<()> {
         // match topics
         match msg {
-            Services::Nfts(key, e) => match e.event {
-                Some(CreateDrop(payload)) => self.create_drop(key, payload).await,
-                Some(MintDrop(payload)) => self.mint_drop(key, payload).await,
-                Some(UpdateDrop(payload)) => self.update_drop(key, payload).await,
-                Some(TransferAsset(payload)) => self.transfer_asset(key, payload).await,
-                Some(RetryDrop(_payload)) => todo!(),
-                Some(RetryMintDrop(_payload)) => todo!(),
-                None => Ok(()),
+            Services::Nfts(key, e) => {
+                let key = SolanaNftEventKey::from(key);
+
+                match e.event {
+                    Some(CreateDrop(payload)) => self.create_drop(key, payload).await,
+                    Some(MintDrop(payload)) => self.mint_drop(key, payload).await,
+                    Some(UpdateDrop(payload)) => self.update_drop(key, payload).await,
+                    Some(TransferAsset(payload)) => self.transfer_asset(key, payload).await,
+                    Some(RetryDrop(_payload)) => todo!(),
+                    Some(RetryMintDrop(_payload)) => todo!(),
+                    None => Ok(()),
+                }
             },
-            Services::Treasury(key, e) => match e.event {
-                Some(MessageSigned(SignedTransactionEvent { event })) => {
-                    let event = event.ok_or(ProcessorError::MessageNotFound)?;
-                    let key: SolanaNftEventKey = TreasuryEventKey::try_into(key)?;
+            Services::Treasury(key, e) => {
+                let key = SolanaNftEventKey::try_from(key)?;
 
-                    match event {
-                        Event::CreateDrop(SignedTransaction { transaction }) => {
-                            let transaction = transaction.ok_or(ProcessorError::MessageNotFound)?;
+                match e.event {
+                    Some(TreasuryEvent::SolanaCreateDropSigned(payload)) => {
+                        let signature = self.solana.submit_transaction(payload.clone())?;
 
-                            let payload = match transaction {
-                                Transaction::Solana(payload) => payload,
-                                _ => return Ok(()),
-                            };
+                        self.create_drop_submitted(key, signature).await?;
 
-                            let signature = self.solana.submit_transaction(payload.clone())?;
+                        Ok(())
+                    },
+                    Some(TreasuryEvent::SolanaUpdateDropSigned(payload)) => {
+                        let signature = self.solana.submit_transaction(payload.clone())?;
 
-                            self.create_drop_submitted(key, signature).await?;
+                        self.update_drop_submitted(key, signature).await?;
 
-                            Ok(())
-                        },
-                        Event::UpdateDrop(SignedTransaction { transaction }) => {
-                            let transaction = transaction.ok_or(ProcessorError::MessageNotFound)?;
+                        Ok(())
+                    },
+                    Some(TreasuryEvent::SolanaMintDropSigned(payload)) => {
+                        let signature = self.solana.submit_transaction(payload.clone())?;
 
-                            let payload = match transaction {
-                                Transaction::Solana(payload) => payload,
-                                _ => return Ok(()),
-                            };
+                        self.mint_drop_submitted(key, signature).await?;
 
-                            let signature = self.solana.submit_transaction(payload.clone())?;
+                        Ok(())
+                    },
+                    Some(TreasuryEvent::SolanaTransferAssetSigned(payload)) => {
+                        let signature = self.solana.submit_transaction(payload.clone())?;
 
-                            self.update_drop_submitted(key, signature).await?;
+                        self.transfer_asset_submitted(key, signature).await?;
 
-                            Ok(())
-                        },
-                        Event::MintDrop(SignedTransaction { transaction }) => {
-                            let transaction = transaction.ok_or(ProcessorError::MessageNotFound)?;
+                        Ok(())
+                    },
+                    Some(TreasuryEvent::SolanaRetryCreateDropSigned(payload)) => {
+                        let signature = self.solana.submit_transaction(payload.clone())?;
 
-                            let payload = match transaction {
-                                Transaction::Solana(payload) => payload,
-                                _ => return Ok(()),
-                            };
+                        self.retry_create_drop_submitted(key, signature).await?;
 
-                            let signature = self.solana.submit_transaction(payload.clone())?;
+                        Ok(())
+                    },
+                    Some(TreasuryEvent::SolanaRetryMintDropSigned(payload)) => {
+                        let signature = self.solana.submit_transaction(payload.clone())?;
 
-                            self.mint_drop_submitted(key, signature).await?;
+                        self.retry_mint_drop_submitted(key, signature).await?;
 
-                            Ok(())
-                        },
-                        Event::TransferAsset(SignedTransaction { transaction }) => {
-                            let transaction = transaction.ok_or(ProcessorError::MessageNotFound)?;
-
-                            let payload = match transaction {
-                                Transaction::Solana(payload) => payload,
-                                _ => return Ok(()),
-                            };
-
-                            let signature = self.solana.submit_transaction(payload.clone())?;
-
-                            self.transfer_asset_submitted(key, signature).await?;
-
-                            Ok(())
-                        },
-                        Event::RetryCreateDrop(SignedTransaction { transaction }) => {
-                            let transaction = transaction.ok_or(ProcessorError::MessageNotFound)?;
-
-                            let payload = match transaction {
-                                Transaction::Solana(payload) => payload,
-                                _ => return Ok(()),
-                            };
-
-                            let signature = self.solana.submit_transaction(payload.clone())?;
-
-                            self.retry_create_drop_submitted(key, signature).await?;
-
-                            Ok(())
-                        },
-                        Event::RetryMintDrop(SignedTransaction { transaction }) => {
-                            let transaction = transaction.ok_or(ProcessorError::MessageNotFound)?;
-
-                            let payload = match transaction {
-                                Transaction::Solana(payload) => payload,
-                                _ => return Ok(()),
-                            };
-
-                            let signature = self.solana.submit_transaction(payload.clone())?;
-
-                            self.retry_mint_drop_submitted(key, signature).await?;
-
-                            Ok(())
-                        },
-                    }
-                },
-                _ => Ok(()),
+                        Ok(())
+                    },
+                    _ => Ok(()),
+                }
             },
         }
     }
 
     async fn create_drop(
         &self,
-        key: NftEventKey,
+        key: SolanaNftEventKey,
         payload: MetaplexMasterEditionTransaction,
     ) -> Result<()> {
         let tx = self.solana.create(payload.clone()).await?;
@@ -194,12 +151,9 @@ impl Processor {
         self.producer
             .send(
                 Some(&SolanaNftEvents {
-                    event: Some(SignCreateDrop(SolanaTransaction {
-                        serialized_message: tx.serialized_message,
-                        signed_message_signatures: tx.signed_message_signatures,
-                    })),
+                    event: Some(CreateDropSigningRequested(tx.into())),
                 }),
-                Some(&key.into()),
+                Some(&key),
             )
             .await?;
 
@@ -208,7 +162,7 @@ impl Processor {
 
     async fn mint_drop(
         &self,
-        key: NftEventKey,
+        key: SolanaNftEventKey,
         payload: MintMetaplexEditionTransaction,
     ) -> Result<()> {
         let MintMetaplexEditionTransaction { collection_id, .. } = payload.clone();
@@ -235,12 +189,9 @@ impl Processor {
         self.producer
             .send(
                 Some(&SolanaNftEvents {
-                    event: Some(SignMintDrop(SolanaTransaction {
-                        serialized_message: tx.serialized_message,
-                        signed_message_signatures: tx.signed_message_signatures,
-                    })),
+                    event: Some(MintDropSigningRequested(tx.into())),
                 }),
-                Some(&key.into()),
+                Some(&key),
             )
             .await?;
 
@@ -249,7 +200,7 @@ impl Processor {
 
     async fn update_drop(
         &self,
-        key: NftEventKey,
+        key: SolanaNftEventKey,
         payload: MetaplexMasterEditionTransaction,
     ) -> Result<()> {
         let MetaplexMasterEditionTransaction { collection_id, .. } = payload.clone();
@@ -263,12 +214,9 @@ impl Processor {
         self.producer
             .send(
                 Some(&SolanaNftEvents {
-                    event: Some(SignUpdateDrop(SolanaTransaction {
-                        serialized_message: tx.serialized_message,
-                        signed_message_signatures: tx.signed_message_signatures,
-                    })),
+                    event: Some(UpdateDropSigningRequested(tx.into())),
                 }),
-                Some(&key.into()),
+                Some(&key),
             )
             .await?;
 
@@ -277,7 +225,7 @@ impl Processor {
 
     async fn transfer_asset(
         &self,
-        key: NftEventKey,
+        key: SolanaNftEventKey,
         payload: TransferMetaplexAssetTransaction,
     ) -> Result<()> {
         let collection_mint_id = Uuid::parse_str(&payload.collection_mint_id.clone())?;
@@ -290,12 +238,9 @@ impl Processor {
         self.producer
             .send(
                 Some(&SolanaNftEvents {
-                    event: Some(SignTransferAsset(SolanaTransaction {
-                        serialized_message: tx.serialized_message,
-                        signed_message_signatures: tx.signed_message_signatures,
-                    })),
+                    event: Some(TransferAssetSigningRequested(tx.into())),
                 }),
-                Some(&key.into()),
+                Some(&key),
             )
             .await?;
 
@@ -306,7 +251,7 @@ impl Processor {
         self.producer
             .send(
                 Some(&SolanaNftEvents {
-                    event: Some(CreateDropSubmitted(SolanaTransactionResponse {
+                    event: Some(CreateDropSubmitted(SolanaCompletedTransaction {
                         signature: Some(signature),
                     })),
                 }),
@@ -321,7 +266,7 @@ impl Processor {
         self.producer
             .send(
                 Some(&SolanaNftEvents {
-                    event: Some(UpdateDropSubmitted(SolanaTransactionResponse {
+                    event: Some(UpdateDropSubmitted(SolanaCompletedTransaction {
                         signature: Some(signature),
                     })),
                 }),
@@ -336,7 +281,7 @@ impl Processor {
         self.producer
             .send(
                 Some(&SolanaNftEvents {
-                    event: Some(MintDropSubmitted(SolanaTransactionResponse {
+                    event: Some(MintDropSubmitted(SolanaCompletedTransaction {
                         signature: Some(signature),
                     })),
                 }),
@@ -355,7 +300,7 @@ impl Processor {
         self.producer
             .send(
                 Some(&SolanaNftEvents {
-                    event: Some(TransferAssetSubmitted(SolanaTransactionResponse {
+                    event: Some(TransferAssetSubmitted(SolanaCompletedTransaction {
                         signature: Some(signature),
                     })),
                 }),
@@ -374,7 +319,7 @@ impl Processor {
         self.producer
             .send(
                 Some(&SolanaNftEvents {
-                    event: Some(RetryCreateDropSubmitted(SolanaTransactionResponse {
+                    event: Some(RetryCreateDropSubmitted(SolanaCompletedTransaction {
                         signature: Some(signature),
                     })),
                 }),
@@ -393,7 +338,7 @@ impl Processor {
         self.producer
             .send(
                 Some(&SolanaNftEvents {
-                    event: Some(RetryMintDropSubmitted(SolanaTransactionResponse {
+                    event: Some(RetryMintDropSubmitted(SolanaCompletedTransaction {
                         signature: Some(signature),
                     })),
                 }),
@@ -436,6 +381,23 @@ impl From<NftEventKey> for SolanaNftEventKey {
             user_id,
             project_id,
             id,
+        }
+    }
+}
+
+impl<A> From<TransactionResponse<A>> for SolanaPendingTransaction {
+    fn from(
+        TransactionResponse {
+            serialized_message,
+            signed_message_signatures,
+            request_signatures,
+            ..
+        }: TransactionResponse<A>,
+    ) -> Self {
+        Self {
+            serialized_message,
+            signed_message_signatures,
+            request_signatures,
         }
     }
 }
