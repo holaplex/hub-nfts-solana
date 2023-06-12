@@ -19,4 +19,10 @@ impl Collection {
 
         Entity::find().filter(Column::Id.eq(id)).one(conn).await
     }
+
+    pub async fn update(db: &Connection, model: ActiveModel) -> Result<Model, DbErr> {
+        let conn = db.get();
+
+        model.update(conn).await
+    }
 }
