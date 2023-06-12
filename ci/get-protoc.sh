@@ -23,5 +23,3 @@ URL="https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VER
 wget -q "$URL" -O protoc.zip
 
 unzip protoc.zip
-cp ./bin/protoc /usr/local/bin/protoc
-rm -rf bin protoc.zip

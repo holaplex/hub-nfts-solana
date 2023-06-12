@@ -16,9 +16,11 @@ RUN apt-get update -y && \
   rm -rf /var/lib/apt/lists/*
 
 COPY ci/get-protoc.sh ./
-RUN chmod +x get-protoc.sh && /app/get-protoc.sh
-
-RUN protoc --version
+RUN chmod +x get-protoc.sh
+RUN /app/get-protoc.sh && \
+    cp ./bin/protoc /usr/bin/protoc && \
+    protoc --version && \
+    rm -rf bin protoc.zip
 
 FROM chef AS planner
 COPY Cargo.* ./
