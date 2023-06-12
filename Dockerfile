@@ -3,6 +3,23 @@ RUN cargo install cargo-chef --locked
 
 WORKDIR /app
 
+RUN apt-get update -y && \
+  apt-get install -y --no-install-recommends \
+    cmake \
+    g++ \
+    libsasl2-dev \
+    libssl-dev \
+    libudev-dev \
+    wget \
+    pkg-config \
+  && \
+  rm -rf /var/lib/apt/lists/*
+
+COPY ci/get-protoc.sh ./
+RUN chmod +x get-protoc.sh && /app/get-protoc.sh
+
+RUN protoc --version
+
 FROM chef AS planner
 COPY Cargo.* ./
 COPY migration migration
@@ -23,6 +40,8 @@ COPY core core
 COPY consumer consumer
 
 FROM builder AS builder-hub-nfts-solana
+RUN protoc --version
+RUN sleep 3
 RUN cargo build --release --bin holaplex-hub-nfts-solana
 
 FROM builder AS builder-migration
