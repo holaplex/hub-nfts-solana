@@ -46,9 +46,7 @@ jobs:
 
       - name: Get protoc from github releases
         run: |
-          ./ci/get-protoc.sh && \
-          sudo cp ./bin/protoc /usr/bin/protoc && \
-          protoc --version
+          sudo ./ci/get-protoc.sh
 
       - uses: actions-rs/toolchain@v1
         with:

@@ -8,7 +8,6 @@ elif [[ $ARCHITECTURE == *'aarch'* ]]; then
     ARCHITECTURE="aarch_64"
 elif [[ $ARCHITECTURE == *'arm'* ]]; then
     ARCHITECTURE="aarch_64"
-
 else
     echo "Unsupported architecture"
     exit 1
@@ -23,3 +22,6 @@ URL="https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VER
 wget -q "$URL" -O protoc.zip
 
 unzip protoc.zip
+cp ./bin/protoc /usr/bin/protoc
+protoc --version
+rm -rf bin protoc.zip
