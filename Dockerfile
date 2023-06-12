@@ -39,8 +39,6 @@ COPY core core
 COPY consumer consumer
 
 FROM builder AS builder-hub-nfts-solana
-RUN protoc --version
-RUN sleep 3
 RUN cargo build --release --bin holaplex-hub-nfts-solana
 
 FROM builder AS builder-migration
