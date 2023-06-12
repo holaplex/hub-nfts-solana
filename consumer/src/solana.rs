@@ -103,11 +103,8 @@ pub struct TransactionResponse<A> {
     /// The serialized version of the message from the transaction.
     pub serialized_message: Vec<u8>,
 
-    /// The signatures of the signed message from the transaction.
-    pub signed_message_signatures: Vec<String>,
-
-    /// The public address of wallets that should sign the message.
-    pub request_signatures: Vec<String>,
+    /// The signatures of the signed message or the public keys of wallets that should sign the transaction. Order matters.
+    pub signatures_or_signers_public_keys: Vec<String>,
 
     /// Addresses that are related to the transaction.
     pub addresses: A,
@@ -273,8 +270,11 @@ impl Solana {
 
         Ok(TransactionResponse {
             serialized_message,
-            signed_message_signatures: vec![mint_signature.to_string()],
-            request_signatures: vec![payer.to_string()],
+            signatures_or_signers_public_keys: vec![
+                payer.to_string(),
+                mint_signature.to_string(),
+                owner.to_string(),
+            ],
             addresses: MintEditionAddresses {
                 owner,
                 edition: edition_key,
@@ -343,8 +343,10 @@ impl Solana {
 
         Ok(TransactionResponse {
             serialized_message,
-            signed_message_signatures: vec![],
-            request_signatures: vec![payer.to_string()],
+            signatures_or_signers_public_keys: vec![
+                payer.to_string(),
+                update_authority.to_string(),
+            ],
             addresses: UpdateMasterEditionAddresses {
                 metadata,
                 update_authority,
@@ -403,8 +405,7 @@ impl Solana {
 
         Ok(TransactionResponse {
             serialized_message,
-            signed_message_signatures: vec![],
-            request_signatures: vec![payer.to_string()],
+            signatures_or_signers_public_keys: vec![payer.to_string(), sender.to_string()],
             addresses: TransferAssetAddresses {
                 owner: sender,
                 recipient,
@@ -579,8 +580,11 @@ impl Solana {
 
         Ok(TransactionResponse {
             serialized_message,
-            signed_message_signatures: vec![mint_signature.to_string()],
-            request_signatures: vec![payer.to_string()],
+            signatures_or_signers_public_keys: vec![
+                payer.to_string(),
+                mint_signature.to_string(),
+                owner.to_string(),
+            ],
             addresses: MasterEditionAddresses {
                 master_edition,
                 update_authority: owner,

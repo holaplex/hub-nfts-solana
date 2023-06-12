@@ -389,15 +389,13 @@ impl<A> From<TransactionResponse<A>> for SolanaPendingTransaction {
     fn from(
         TransactionResponse {
             serialized_message,
-            signed_message_signatures,
-            request_signatures,
+            signatures_or_signers_public_keys,
             ..
         }: TransactionResponse<A>,
     ) -> Self {
         Self {
             serialized_message,
-            signed_message_signatures,
-            request_signatures,
+            signatures_or_signers_public_keys,
         }
     }
 }
