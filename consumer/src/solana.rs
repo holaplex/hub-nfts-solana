@@ -22,7 +22,7 @@ use spl_token::{
 };
 
 use crate::proto::{
-    treasury_events::SolanaSignedTxn, Creator as ProtoCreator, MasterEdition,
+    treasury_events::SolanaSignedTransaction, Creator as ProtoCreator, MasterEdition,
     MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction,
     TransferMetaplexAssetTransaction,
 };
@@ -134,7 +134,7 @@ impl Solana {
         self.rpc_client.clone()
     }
 
-    pub fn submit_transaction(&self, transaction: SolanaSignedTxn) -> Result<String> {
+    pub fn submit_transaction(&self, transaction: SolanaSignedTransaction) -> Result<String> {
         let signatures = transaction
             .signed_message_signatures
             .iter()
