@@ -56,9 +56,19 @@ RUN apt-get update -y && \
   rm -rf /var/lib/apt/lists/*
 
 FROM base AS hub-nfts-solana
-COPY --from=builder-hub-nfts-solana /app/target/release/holaplex-hub-nfts-solana bin
-CMD ["bin/holaplex-hub-nfts-solana"]
+ENV TZ=Etc/UTC
+ENV APP_USER=runner
+
+RUN groupadd $APP_USER \
+    && useradd --uid 10000 -g $APP_USER $APP_USER \
+    && mkdir -p bin
+
+RUN chown -R $APP_USER:$APP_USER bin
+
+USER 10000
+COPY --from=builder-hub-nfts-solana /app/target/release/holaplex-hub-nfts-solana /usr/local/bin
+CMD ["/usr/local/bin/holaplex-hub-nfts-solana"]
 
 FROM base AS migrator
-COPY --from=builder-migration /app/target/release/migration bin/
-CMD ["bin/migration"]
+COPY --from=builder-migration /app/target/release/migration /usr/local/bin
+CMD ["/usr/local/bin/migration"]
