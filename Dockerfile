@@ -70,5 +70,5 @@ COPY --from=builder-hub-nfts-solana /app/target/release/holaplex-hub-nfts-solana
 CMD ["/usr/local/bin/holaplex-hub-nfts-solana"]
 
 FROM base AS migrator
-COPY --from=builder-migration /app/target/release/migration /usr/local/bin
-CMD ["/usr/local/bin/migration"]
+COPY --from=builder-migration /app/target/release/migration bin/
+CMD ["bin/migration"]
