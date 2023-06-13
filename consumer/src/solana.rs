@@ -130,11 +130,16 @@ impl Solana {
         }
     }
 
+    #[must_use]
     pub fn rpc(&self) -> Arc<RpcClient> {
         self.rpc_client.clone()
     }
 
-    pub fn submit_transaction(&self, transaction: SolanaSignedTransaction) -> Result<String> {
+    /// Res
+    ///
+    /// # Errors
+    /// This function fails if unable to submit transaction to Solana
+    pub fn submit_transaction(&self, transaction: &SolanaSignedTransaction) -> Result<String> {
         let signatures = transaction
             .signed_message_signatures
             .iter()
@@ -160,7 +165,7 @@ impl Solana {
     ///
     /// # Errors
     /// This function fails if unable to assemble or save solana drop
-    pub async fn create(
+    pub fn create(
         &self,
         payload: MetaplexMasterEditionTransaction,
     ) -> Result<TransactionResponse<MasterEditionAddresses>> {
@@ -176,7 +181,7 @@ impl Solana {
     ///
     /// # Errors
     /// This function fails if unable to assemble solana mint transaction
-    pub async fn mint(
+    pub fn mint(
         &self,
         collection: collections::Model,
         payload: MintMetaplexEditionTransaction,
@@ -285,7 +290,11 @@ impl Solana {
         })
     }
 
-    pub async fn update(
+    /// Res
+    ///
+    /// # Errors
+    /// This function fails if unable to assemble or save solana update of a drop
+    pub fn update(
         &self,
         collection: collections::Model,
         payload: MetaplexMasterEditionTransaction,
@@ -354,7 +363,7 @@ impl Solana {
         })
     }
 
-    pub async fn transfer(
+    pub fn transfer(
         &self,
         collection_mint: collection_mints::Model,
         payload: TransferMetaplexAssetTransaction,
@@ -415,49 +424,7 @@ impl Solana {
         })
     }
 
-    // #[allow(clippy::too_many_lines)]
-
-    // async fn retry_drop(&self, request: RetryDropRequest) -> Result<(Pubkey, TransactionResponse)> {
-    //     let rpc = &self.rpc_client;
-    //     let conn = self.db.get();
-
-    //     let RetryDropRequest { collection } = request;
-
-    //     let solana_collection = solana_collections::Entity::find()
-    //         .filter(solana_collections::Column::CollectionId.eq(collection.id))
-    //         .one(conn)
-    //         .await?
-    //         .context("solana collection not found")?;
-    //     let metadata_json = MetadataJsons::find_by_id(collection.id)
-    //         .one(conn)
-    //         .await?
-    //         .context("metadata json not found")?;
-    //     let creators = CollectionCreators::find()
-    //         .filter(collection_creators::Column::CollectionId.eq(collection.id))
-    //         .all(conn)
-    //         .await?
-    //         .into_iter()
-    //         .map(TryInto::try_into)
-    //         .collect::<Result<Vec<Creator>>>()?;
-
-    //     let payer = Keypair::from_bytes(&self.payer_keypair)?;
-    //     let owner = solana_collection.owner_pubkey.parse()?;
-
-    //     let (mint, master_edition, ata, metadata, tx) =
-    //         create_drop_transaction(rpc, &payer, &owner, &collection, &metadata_json, &creators)?;
-
-    //     // update solana collection record
-    //     let mut sc: solana_collections::ActiveModel = solana_collection.into();
-    //     sc.master_edition_address = Set(master_edition.to_string());
-    //     sc.ata_pubkey = Set(ata.to_string());
-    //     sc.mint_pubkey = Set(mint.to_string());
-    //     sc.metadata_pubkey = Set(metadata.to_string());
-
-    //     sc.update(conn).await?;
-
-    //     Ok((mint, tx))
-    // }
-
+    #[allow(clippy::too_many_lines)]
     fn master_edition_transaction(
         &self,
         payload: MasterEdition,
