@@ -225,7 +225,7 @@ impl Processor {
             collection_id,
             mint: tx.addresses.mint.to_string(),
             owner: tx.addresses.owner.to_string(),
-            associated_token_account: tx.addresses.associated_token_account.to_string(),
+            associated_token_account: Some(tx.addresses.associated_token_account.to_string()),
             ..Default::default()
         };
 
@@ -266,7 +266,7 @@ impl Processor {
         collection_mint.mint = Set(tx.addresses.mint.to_string());
         collection_mint.owner = Set(tx.addresses.owner.to_string());
         collection_mint.associated_token_account =
-            Set(tx.addresses.associated_token_account.to_string());
+            Set(Some(tx.addresses.associated_token_account.to_string()));
 
         CollectionMint::update(&self.db, collection_mint).await?;
 
