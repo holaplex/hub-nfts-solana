@@ -10,6 +10,9 @@ path = "src/lib.rs"
 
 [dependencies]
 async-std = { version = "^1", features = ["attributes", "tokio1"] }
+holaplex-hub-nfts-solana-entity = { path = "./../entity" }
+spl-associated-token-account = "1.1.2"
+solana-sdk = "1.14.8"
 
 [dependencies.sea-orm-migration]
 version = "^0.10.0"
