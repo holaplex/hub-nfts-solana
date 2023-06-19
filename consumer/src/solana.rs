@@ -22,7 +22,7 @@ use spl_token::{
 };
 
 use crate::proto::{
-    treasury_events::SolanaSignedTransaction, Creator as ProtoCreator, MasterEdition,
+    treasury_events::SolanaTransactionResult, Creator as ProtoCreator, MasterEdition,
     MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction,
     TransferMetaplexAssetTransaction,
 };
@@ -114,6 +114,8 @@ pub struct TransactionResponse<A> {
 enum SolanaError {
     #[error("master edition message not found")]
     MasterEditionMessageNotFound,
+    #[error("serialized message message not found")]
+    SerializedMessageNotFound,
 }
 
 #[derive(Clone)]
@@ -139,7 +141,7 @@ impl Solana {
     ///
     /// # Errors
     /// This function fails if unable to submit transaction to Solana
-    pub fn submit_transaction(&self, transaction: &SolanaSignedTransaction) -> Result<String> {
+    pub fn submit_transaction(&self, transaction: &SolanaTransactionResult) -> Result<String> {
         let signatures = transaction
             .signed_message_signatures
             .iter()
@@ -149,7 +151,12 @@ impl Solana {
             })
             .collect::<Result<Vec<Signature>>>()?;
 
-        let message = bincode::deserialize(&transaction.serialized_message)?;
+        let message = bincode::deserialize(
+            &transaction
+                .serialized_message
+                .clone()
+                .ok_or(SolanaError::SerializedMessageNotFound)?,
+        )?;
 
         let transaction = Transaction {
             signatures,
@@ -183,7 +190,7 @@ impl Solana {
     /// This function fails if unable to assemble solana mint transaction
     pub fn mint(
         &self,
-        collection: collections::Model,
+        collection: &collections::Model,
         payload: MintMetaplexEditionTransaction,
     ) -> Result<TransactionResponse<MintEditionAddresses>> {
         let rpc = &self.rpc_client;
@@ -296,7 +303,7 @@ impl Solana {
     /// This function fails if unable to assemble or save solana update of a drop
     pub fn update(
         &self,
-        collection: collections::Model,
+        collection: &collections::Model,
         payload: MetaplexMasterEditionTransaction,
     ) -> Result<TransactionResponse<UpdateMasterEditionAddresses>> {
         let rpc = &self.rpc_client;
@@ -365,7 +372,7 @@ impl Solana {
 
     pub fn transfer(
         &self,
-        collection_mint: collection_mints::Model,
+        collection_mint: &collection_mints::Model,
         payload: TransferMetaplexAssetTransaction,
     ) -> Result<TransactionResponse<TransferAssetAddresses>> {
         let rpc = &self.rpc_client;
