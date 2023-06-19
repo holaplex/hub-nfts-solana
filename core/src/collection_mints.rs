@@ -1,5 +1,8 @@
-use holaplex_hub_nfts_solana_entity::collection_mints::{ActiveModel, Column, Entity, Model};
-use sea_orm::prelude::*;
+use holaplex_hub_nfts_solana_entity::{
+    collection_mints::{ActiveModel, Column, Entity, Model, Relation},
+    collections,
+};
+use sea_orm::{prelude::*, JoinType, QuerySelect};
 
 use crate::db::Connection;
 
@@ -18,6 +21,20 @@ impl CollectionMint {
         let conn = db.get();
 
         Entity::find().filter(Column::Id.eq(id)).one(conn).await
+    }
+
+    pub async fn find_by_id_with_collection(
+        db: &Connection,
+        id: Uuid,
+    ) -> Result<Option<(Model, Option<collections::Model>)>, DbErr> {
+        let conn = db.get();
+
+        Entity::find()
+            .find_also_related(collections::Entity)
+            .join(JoinType::InnerJoin, Relation::Collections.def())
+            .filter(Column::Id.eq(id))
+            .one(conn)
+            .await
     }
 
     pub async fn update(db: &Connection, model: ActiveModel) -> Result<Model, DbErr> {
