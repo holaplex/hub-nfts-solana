@@ -442,7 +442,7 @@ impl Processor {
         key: SolanaNftEventKey,
         payload: MintMetaplexEditionTransaction,
     ) -> Result<()> {
-        let id = Uuid::parse_str(&&payload.collection_id.clone())?;
+        let id = Uuid::parse_str(&payload.collection_id.clone())?;
         let collection = Collection::find_by_id(&self.db, id)
             .await?
             .ok_or(ProcessorError::RecordNotFound)?;
