@@ -145,13 +145,26 @@ impl Processor {
                         let status = TransactionStatus::from_i32(payload.status)
                             .ok_or(ProcessorError::TransactionStatusNotFound)?;
 
-                        if status == TransactionStatus::Completed {
-                            let signature = self.solana.submit_transaction(&payload)?;
-
-                            self.create_drop_submitted(key, signature).await?;
-                        } else {
+                        if status == TransactionStatus::Failed {
                             self.create_drop_failed(key, SolanaTransactionFailureReason::Sign)
                                 .await?;
+
+                            return Ok(());
+                        }
+
+                        let signature_result = self.solana.submit_transaction(&payload);
+
+                        match signature_result {
+                            Ok(signature) => {
+                                self.create_drop_submitted(key, signature).await?;
+                            },
+                            Err(_) => {
+                                self.create_drop_failed(
+                                    key,
+                                    SolanaTransactionFailureReason::Submit,
+                                )
+                                .await?;
+                            },
                         }
 
                         Ok(())
@@ -160,13 +173,25 @@ impl Processor {
                         let status = TransactionStatus::from_i32(payload.status)
                             .ok_or(ProcessorError::TransactionStatusNotFound)?;
 
-                        if status == TransactionStatus::Completed {
-                            let signature = self.solana.submit_transaction(&payload)?;
-
-                            self.update_drop_submitted(key, signature).await?;
-                        } else {
+                        if status == TransactionStatus::Failed {
                             self.update_drop_failed(key, SolanaTransactionFailureReason::Sign)
                                 .await?;
+                            return Ok(());
+                        }
+
+                        let signature_result = self.solana.submit_transaction(&payload);
+
+                        match signature_result {
+                            Ok(signature) => {
+                                self.update_drop_submitted(key, signature).await?;
+                            },
+                            Err(_) => {
+                                self.update_drop_failed(
+                                    key,
+                                    SolanaTransactionFailureReason::Submit,
+                                )
+                                .await?;
+                            },
                         }
 
                         Ok(())
@@ -175,13 +200,23 @@ impl Processor {
                         let status = TransactionStatus::from_i32(payload.status)
                             .ok_or(ProcessorError::TransactionStatusNotFound)?;
 
-                        if status == TransactionStatus::Completed {
-                            let signature = self.solana.submit_transaction(&payload)?;
-
-                            self.mint_drop_submitted(key, signature).await?;
-                        } else {
+                        if status == TransactionStatus::Failed {
                             self.mint_drop_failed(key, SolanaTransactionFailureReason::Sign)
                                 .await?;
+
+                            return Ok(());
+                        }
+
+                        let signature_result = self.solana.submit_transaction(&payload);
+
+                        match signature_result {
+                            Ok(signature) => {
+                                self.mint_drop_submitted(key, signature).await?;
+                            },
+                            Err(_) => {
+                                self.mint_drop_failed(key, SolanaTransactionFailureReason::Submit)
+                                    .await?;
+                            },
                         }
 
                         Ok(())
@@ -190,13 +225,26 @@ impl Processor {
                         let status = TransactionStatus::from_i32(payload.status)
                             .ok_or(ProcessorError::TransactionStatusNotFound)?;
 
-                        if status == TransactionStatus::Completed {
-                            let signature = self.solana.submit_transaction(&payload)?;
-
-                            self.transfer_asset_submitted(key, signature).await?;
-                        } else {
+                        if status == TransactionStatus::Failed {
                             self.transfer_asset_failed(key, SolanaTransactionFailureReason::Sign)
                                 .await?;
+
+                            return Ok(());
+                        }
+
+                        let signature_result = self.solana.submit_transaction(&payload);
+
+                        match signature_result {
+                            Ok(signature) => {
+                                self.transfer_asset_submitted(key, signature).await?;
+                            },
+                            Err(_) => {
+                                self.transfer_asset_failed(
+                                    key,
+                                    SolanaTransactionFailureReason::Submit,
+                                )
+                                .await?;
+                            },
                         }
 
                         Ok(())
@@ -205,16 +253,29 @@ impl Processor {
                         let status = TransactionStatus::from_i32(payload.status)
                             .ok_or(ProcessorError::TransactionStatusNotFound)?;
 
-                        if status == TransactionStatus::Completed {
-                            let signature = self.solana.submit_transaction(&payload)?;
-
-                            self.retry_create_drop_submitted(key, signature).await?;
-                        } else {
+                        if status == TransactionStatus::Failed {
                             self.retry_create_drop_failed(
                                 key,
                                 SolanaTransactionFailureReason::Sign,
                             )
                             .await?;
+
+                            return Ok(());
+                        }
+
+                        let signature_result = self.solana.submit_transaction(&payload);
+
+                        match signature_result {
+                            Ok(signature) => {
+                                self.retry_create_drop_submitted(key, signature).await?;
+                            },
+                            Err(_) => {
+                                self.retry_create_drop_failed(
+                                    key,
+                                    SolanaTransactionFailureReason::Submit,
+                                )
+                                .await?;
+                            },
                         }
 
                         Ok(())
@@ -223,13 +284,25 @@ impl Processor {
                         let status = TransactionStatus::from_i32(payload.status)
                             .ok_or(ProcessorError::TransactionStatusNotFound)?;
 
-                        if status == TransactionStatus::Completed {
-                            let signature = self.solana.submit_transaction(&payload)?;
-
-                            self.retry_mint_drop_submitted(key, signature).await?;
-                        } else {
+                        if status == TransactionStatus::Failed {
                             self.retry_mint_drop_failed(key, SolanaTransactionFailureReason::Sign)
                                 .await?;
+
+                            return Ok(());
+                        }
+                        let signature_result = self.solana.submit_transaction(&payload);
+
+                        match signature_result {
+                            Ok(signature) => {
+                                self.retry_mint_drop_submitted(key, signature).await?;
+                            },
+                            Err(_) => {
+                                self.retry_mint_drop_failed(
+                                    key,
+                                    SolanaTransactionFailureReason::Submit,
+                                )
+                                .await?;
+                            },
                         }
 
                         Ok(())
