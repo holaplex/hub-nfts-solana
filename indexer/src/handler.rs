@@ -8,13 +8,12 @@ use holaplex_hub_nfts_solana_core::{
         solana_nft_events::Event::UpdateMintOwner, MintOwnershipUpdate, SolanaNftEventKey,
         SolanaNftEvents,
     },
-    sea_orm::{ColumnTrait, EntityTrait, QueryFilter},
+    CollectionMint,
 };
-use holaplex_hub_nfts_solana_entity::{collection_mints, prelude::CollectionMints};
 use hub_core::{prelude::*, producer::Producer, tokio::task};
 use solana_client::rpc_client::RpcClient;
 use solana_program::program_pack::Pack;
-use solana_sdk::pubkey::Pubkey;
+use solana_sdk::{pubkey::Pubkey, signature::Signature};
 use spl_token::{instruction::TokenInstruction, state::Account};
 use yellowstone_grpc_client::GeyserGrpcClientError;
 use yellowstone_grpc_proto::{
@@ -100,6 +99,7 @@ impl MessageHandler {
     async fn process_transaction(self, tx: SubscribeUpdateTransaction) -> Result<()> {
         let message = tx
             .transaction
+            .clone()
             .context("SubsribeTransactionInfo not found")?
             .transaction
             .context("Transaction not found")?
@@ -127,6 +127,13 @@ impl MessageHandler {
                 let tkn_instruction = spl_token::instruction::TokenInstruction::unpack(data)?;
                 if let TokenInstruction::Transfer { amount } = tkn_instruction {
                     if amount == 1 {
+                        let sig = tx
+                            .transaction
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("failed to get transaction"))?
+                            .signature
+                            .clone();
+
                         let source_account_index = account_indices[0];
                         let source_bytes = &keys[source_account_index as usize];
                         let source = Pubkey::try_from(source_bytes.clone())
@@ -136,17 +143,21 @@ impl MessageHandler {
                         let destination = Pubkey::try_from(destination_bytes.clone())
                             .map_err(|_| anyhow!("failed to parse pubkey"))?;
 
-                        let collection_mint = CollectionMints::find()
-                            .filter(
-                                collection_mints::Column::AssociatedTokenAccount
-                                    .eq(source.to_string()),
-                            )
-                            .one(self.db.get())
-                            .await?;
+                        let collection_mint =
+                            CollectionMint::find_by_ata(&self.db, source.to_string()).await?;
 
                         if let Some(mint) = collection_mint {
                             let acct = &self.rpc.get_account(&destination)?;
                             let destination_tkn_act = Account::unpack(&acct.data)?;
+                            let new_owner = destination_tkn_act.owner.to_string();
+
+                            CollectionMint::update_owner_and_ata(
+                                &self.db,
+                                &mint,
+                                new_owner.clone(),
+                                destination.to_string(),
+                            )
+                            .await?;
 
                             self.producer
                                 .send(
@@ -154,9 +165,9 @@ impl MessageHandler {
                                         event: Some(UpdateMintOwner(MintOwnershipUpdate {
                                             mint_address: destination_tkn_act.mint.to_string(),
                                             sender: mint.owner.to_string(),
-                                            recipient: destination_tkn_act.owner.to_string(),
-                                            source_ata: source.to_string(),
-                                            destination_ata: destination.to_string(),
+                                            recipient: new_owner,
+                                            tx_signature: Signature::new(sig.as_slice())
+                                                .to_string(),
                                         })),
                                     }),
                                     Some(&SolanaNftEventKey {

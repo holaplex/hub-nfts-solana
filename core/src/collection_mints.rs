@@ -2,7 +2,7 @@ use holaplex_hub_nfts_solana_entity::{
     collection_mints::{ActiveModel, Column, Entity, Model, Relation},
     collections,
 };
-use sea_orm::{prelude::*, JoinType, QuerySelect};
+use sea_orm::{prelude::*, JoinType, QuerySelect, Set};
 
 use crate::db::Connection;
 
@@ -21,6 +21,29 @@ impl CollectionMint {
         let conn = db.get();
 
         Entity::find().filter(Column::Id.eq(id)).one(conn).await
+    }
+
+    pub async fn update_owner_and_ata(
+        db: &Connection,
+        model: &Model,
+        owner: String,
+        ata: String,
+    ) -> Result<Model, DbErr> {
+        let conn = db.get();
+
+        let mut active_model: ActiveModel = model.clone().into();
+        active_model.owner = Set(owner);
+        active_model.associated_token_account = Set(Some(ata));
+        active_model.update(conn).await
+    }
+
+    pub async fn find_by_ata(db: &Connection, ata: String) -> Result<Option<Model>, DbErr> {
+        let conn = db.get();
+
+        Entity::find()
+            .filter(Column::AssociatedTokenAccount.eq(ata))
+            .one(conn)
+            .await
     }
 
     pub async fn find_by_id_with_collection(
