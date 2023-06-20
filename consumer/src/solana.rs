@@ -1,5 +1,9 @@
 use std::vec;
 
+use holaplex_hub_nfts_solana_core::proto::{
+    treasury_events::SolanaTransactionResult, MasterEdition, MetaplexMasterEditionTransaction,
+    MintMetaplexEditionTransaction, TransferMetaplexAssetTransaction,
+};
 use holaplex_hub_nfts_solana_entity::{collection_mints, collections};
 use hub_core::{anyhow::Result, clap, prelude::*, thiserror::Error, uuid::Uuid};
 use mpl_token_metadata::{
@@ -19,12 +23,6 @@ use spl_associated_token_account::{
 use spl_token::{
     instruction::{initialize_mint, mint_to},
     state,
-};
-
-use crate::proto::{
-    treasury_events::SolanaTransactionResult, Creator as ProtoCreator, MasterEdition,
-    MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction,
-    TransferMetaplexAssetTransaction,
 };
 
 const TOKEN_PROGRAM_PUBKEY: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
@@ -567,24 +565,6 @@ impl Solana {
                 owner,
                 metadata,
             },
-        })
-    }
-}
-
-impl TryFrom<ProtoCreator> for Creator {
-    type Error = Error;
-
-    fn try_from(
-        ProtoCreator {
-            address,
-            verified,
-            share,
-        }: ProtoCreator,
-    ) -> Result<Self> {
-        Ok(Self {
-            address: address.parse()?,
-            verified,
-            share: share.try_into()?,
         })
     }
 }
