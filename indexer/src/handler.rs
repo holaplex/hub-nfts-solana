@@ -138,45 +138,47 @@ impl MessageHandler {
                         let source_bytes = &keys[source_account_index as usize];
                         let source = Pubkey::try_from(source_bytes.clone())
                             .map_err(|_| anyhow!("failed to parse pubkey"))?;
-                        let destination_account_index = account_indices[1];
-                        let destination_bytes = &keys[destination_account_index as usize];
-                        let destination = Pubkey::try_from(destination_bytes.clone())
-                            .map_err(|_| anyhow!("failed to parse pubkey"))?;
 
                         let collection_mint =
                             CollectionMint::find_by_ata(&self.db, source.to_string()).await?;
 
-                        if let Some(mint) = collection_mint {
-                            let acct = &self.rpc.get_account(&destination)?;
-                            let destination_tkn_act = Account::unpack(&acct.data)?;
-                            let new_owner = destination_tkn_act.owner.to_string();
+                        if collection_mint.is_none() {
+                            return Ok(());
+                        }
 
-                            CollectionMint::update_owner_and_ata(
-                                &self.db,
-                                &mint,
-                                new_owner.clone(),
-                                destination.to_string(),
+                        let destination_account_index = account_indices[1];
+                        let destination_bytes = &keys[destination_account_index as usize];
+                        let destination = Pubkey::try_from(destination_bytes.clone())
+                            .map_err(|_| anyhow!("failed to parse pubkey"))?;
+                        let acct = &self.rpc.get_account(&destination)?;
+                        let destination_tkn_act = Account::unpack(&acct.data)?;
+                        let new_owner = destination_tkn_act.owner.to_string();
+                        let mint = collection_mint.context("No mint found")?;
+
+                        CollectionMint::update_owner_and_ata(
+                            &self.db,
+                            &mint,
+                            new_owner.clone(),
+                            destination.to_string(),
+                        )
+                        .await?;
+
+                        self.producer
+                            .send(
+                                Some(&SolanaNftEvents {
+                                    event: Some(UpdateMintOwner(MintOwnershipUpdate {
+                                        mint_address: destination_tkn_act.mint.to_string(),
+                                        sender: mint.owner.to_string(),
+                                        recipient: new_owner,
+                                        tx_signature: Signature::new(sig.as_slice()).to_string(),
+                                    })),
+                                }),
+                                Some(&SolanaNftEventKey {
+                                    id: mint.id.to_string(),
+                                    ..Default::default()
+                                }),
                             )
                             .await?;
-
-                            self.producer
-                                .send(
-                                    Some(&SolanaNftEvents {
-                                        event: Some(UpdateMintOwner(MintOwnershipUpdate {
-                                            mint_address: destination_tkn_act.mint.to_string(),
-                                            sender: mint.owner.to_string(),
-                                            recipient: new_owner,
-                                            tx_signature: Signature::new(sig.as_slice())
-                                                .to_string(),
-                                        })),
-                                    }),
-                                    Some(&SolanaNftEventKey {
-                                        id: mint.id.to_string(),
-                                        ..Default::default()
-                                    }),
-                                )
-                                .await?;
-                        }
                     }
                 }
             }
