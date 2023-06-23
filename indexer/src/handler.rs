@@ -111,7 +111,7 @@ impl MessageHandler {
         let keys = message.clone().account_keys;
 
         for (idx, key) in message.clone().account_keys.iter().enumerate() {
-            let k = Pubkey::try_from(key.clone()).map_err(|_| anyhow!("failed to parse pubkey"))?;
+            let k = Pubkey::new(&key);
             if k == spl_token::ID {
                 i = idx;
                 break;
@@ -147,8 +147,7 @@ impl MessageHandler {
 
                     let source_account_index = account_indices[0];
                     let source_bytes = &keys[source_account_index as usize];
-                    let source = Pubkey::try_from(source_bytes.clone())
-                        .map_err(|_| anyhow!("failed to parse pubkey"))?;
+                    let source = Pubkey::new(&source_bytes);
 
                     let collection_mint =
                         CollectionMint::find_by_ata(&self.db, source.to_string()).await?;
@@ -159,8 +158,7 @@ impl MessageHandler {
 
                     let destination_account_index = account_indices[destination_ata_index];
                     let destination_bytes = &keys[destination_account_index as usize];
-                    let destination = Pubkey::try_from(destination_bytes.clone())
-                        .map_err(|_| anyhow!("failed to parse pubkey"))?;
+                    let destination = Pubkey::new(&destination_bytes);
 
                     let acct = fetch_account(&self.rpc, &destination).await?;
                     let destination_tkn_act = Account::unpack(&acct.data)?;
