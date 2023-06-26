@@ -9,7 +9,7 @@ pub mod db;
 pub use collection_mints::CollectionMint;
 pub use collections::Collection;
 use hub_core::{consumer::RecvError, prelude::*};
-use proto::{NftEventKey, SolanaNftEventKey, TreasuryEventKey};
+use proto::{SolanaEventKey, SolanaNftEventKey, TreasuryEventKey};
 pub use sea_orm;
 
 #[allow(clippy::pedantic)]
@@ -21,7 +21,7 @@ pub mod proto {
 
 #[derive(Debug)]
 pub enum Services {
-    Nfts(proto::NftEventKey, proto::SolanaEvents),
+    Nfts(proto::SolanaEventKey, proto::SolanaEvents),
     Treasury(proto::TreasuryEventKey, proto::TreasuryEvents),
 }
 
@@ -41,8 +41,12 @@ impl hub_core::consumer::MessageGroup for Services {
 
         match topic {
             "hub-nfts" => {
-                let key = proto::NftEventKey::decode(key)?;
+                let key = proto::SolanaEventKey::decode(key)?;
                 let val = proto::SolanaEvents::decode(val)?;
+
+                if key.id.is_empty() {
+                    return Err(RecvError::MissingKey);
+                }
 
                 Ok(Services::Nfts(key, val))
             },
@@ -72,9 +76,9 @@ impl From<TreasuryEventKey> for SolanaNftEventKey {
     }
 }
 
-impl From<NftEventKey> for SolanaNftEventKey {
-    fn from(key: NftEventKey) -> Self {
-        let NftEventKey {
+impl From<SolanaEventKey> for SolanaNftEventKey {
+    fn from(key: SolanaEventKey) -> Self {
+        let SolanaEventKey {
             user_id,
             project_id,
             id,
