@@ -20,6 +20,7 @@ pub mod proto {
 pub enum Services {
     Nfts(proto::NftEventKey, proto::SolanaEvents),
     Treasury(proto::TreasuryEventKey, proto::TreasuryEvents),
+    None,
 }
 
 impl hub_core::producer::Message for proto::SolanaNftEvents {
@@ -41,7 +42,11 @@ impl hub_core::consumer::MessageGroup for Services {
                 let key = proto::NftEventKey::decode(key)?;
                 let val = proto::SolanaEvents::decode(val)?;
 
-                Ok(Services::Nfts(key, val))
+                if key.event_type == proto::EventType::Solana as i32 {
+                    Ok(Services::Nfts(key, val))
+                } else {
+                    Ok(Services::None)
+                }
             },
             "hub-treasuries" => {
                 let key = proto::TreasuryEventKey::decode(key)?;

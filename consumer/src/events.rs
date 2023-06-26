@@ -310,6 +310,7 @@ impl Processor {
                     _ => Ok(()),
                 }
             },
+            Services::None => Ok(()),
         }
     }
 
@@ -783,6 +784,7 @@ impl From<NftEventKey> for SolanaNftEventKey {
             user_id,
             project_id,
             id,
+            ..
         } = key;
 
         Self {
