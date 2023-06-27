@@ -5,7 +5,8 @@ use hub_core::{chrono::Utc, prelude::*, producer::Producer, thiserror::Error, uu
 use crate::{
     proto::{
         nft_events::Event::{
-            SolanaCreateDrop, SolanaMintDrop, SolanaRetryDrop, SolanaRetryMintDrop, SolanaTransferAsset, SolanaUpdateDrop,
+            SolanaCreateDrop, SolanaMintDrop, SolanaRetryDrop, SolanaRetryMintDrop,
+            SolanaTransferAsset, SolanaUpdateDrop,
         },
         solana_nft_events::Event::{
             CreateDropFailed, CreateDropSigningRequested, CreateDropSubmitted, MintDropFailed,
@@ -134,7 +135,7 @@ impl Processor {
 
                         Ok(())
                     },
-                    Some(_)  | None => Ok(()),
+                    Some(_) | None => Ok(()),
                 }
             },
             Services::Treasury(key, e) => {
