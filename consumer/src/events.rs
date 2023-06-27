@@ -4,8 +4,8 @@ use hub_core::{chrono::Utc, prelude::*, producer::Producer, thiserror::Error, uu
 
 use crate::{
     proto::{
-        solana_events::Event::{
-            CreateDrop, MintDrop, RetryDrop, RetryMintDrop, TransferAsset, UpdateDrop,
+        nft_events::Event::{
+            SolanaCreateDrop, SolanaMintDrop, SolanaRetryDrop, SolanaRetryMintDrop, SolanaTransferAsset, SolanaUpdateDrop,
         },
         solana_nft_events::Event::{
             CreateDropFailed, CreateDropSigningRequested, CreateDropSubmitted, MintDropFailed,
@@ -64,7 +64,7 @@ impl Processor {
                 let key = SolanaNftEventKey::from(key);
 
                 match e.event {
-                    Some(CreateDrop(payload)) => {
+                    Some(SolanaCreateDrop(payload)) => {
                         let create_drop_result = self.create_drop(key.clone(), payload).await;
 
                         if create_drop_result.is_err() {
@@ -74,7 +74,7 @@ impl Processor {
 
                         Ok(())
                     },
-                    Some(MintDrop(payload)) => {
+                    Some(SolanaMintDrop(payload)) => {
                         let mint_drop_result = self.mint_drop(key.clone(), payload).await;
 
                         if mint_drop_result.is_err() {
@@ -84,7 +84,7 @@ impl Processor {
 
                         Ok(())
                     },
-                    Some(UpdateDrop(payload)) => {
+                    Some(SolanaUpdateDrop(payload)) => {
                         let update_drop_result = self.update_drop(key.clone(), payload).await;
 
                         if update_drop_result.is_err() {
@@ -94,7 +94,7 @@ impl Processor {
 
                         Ok(())
                     },
-                    Some(TransferAsset(payload)) => {
+                    Some(SolanaTransferAsset(payload)) => {
                         let transfer_asset_result = self.transfer_asset(key.clone(), payload).await;
 
                         if transfer_asset_result.is_err() {
@@ -107,7 +107,7 @@ impl Processor {
 
                         Ok(())
                     },
-                    Some(RetryDrop(payload)) => {
+                    Some(SolanaRetryDrop(payload)) => {
                         let retry_drop_result = self.retry_drop(key.clone(), payload).await;
 
                         if retry_drop_result.is_err() {
@@ -120,7 +120,7 @@ impl Processor {
 
                         Ok(())
                     },
-                    Some(RetryMintDrop(payload)) => {
+                    Some(SolanaRetryMintDrop(payload)) => {
                         let retry_mint_drop_result =
                             self.retry_mint_drop(key.clone(), payload).await;
 
@@ -134,7 +134,7 @@ impl Processor {
 
                         Ok(())
                     },
-                    None => Ok(()),
+                    Some(_)  | None => Ok(()),
                 }
             },
             Services::Treasury(key, e) => {
