@@ -18,7 +18,7 @@ pub mod proto {
 
 #[derive(Debug)]
 pub enum Services {
-    Nfts(proto::NftEventKey, proto::SolanaEvents),
+    Nfts(proto::NftEventKey, proto::NftEvents),
     Treasury(proto::TreasuryEventKey, proto::TreasuryEvents),
 }
 
@@ -39,7 +39,7 @@ impl hub_core::consumer::MessageGroup for Services {
         match topic {
             "hub-nfts" => {
                 let key = proto::NftEventKey::decode(key)?;
-                let val = proto::SolanaEvents::decode(val)?;
+                let val = proto::NftEvents::decode(val)?;
 
                 Ok(Services::Nfts(key, val))
             },
