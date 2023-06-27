@@ -176,6 +176,7 @@ impl Processor {
                         if status == TransactionStatus::Failed {
                             self.update_drop_failed(key, SolanaTransactionFailureReason::Sign)
                                 .await?;
+
                             return Ok(());
                         }
 
