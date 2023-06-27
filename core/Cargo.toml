@@ -2,8 +2,16 @@
 name = "holaplex-hub-nfts-solana-core"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+keywords = ["solana", "hub", "holaplex", "nfts"]
+publish = false
+authors = [
+  "Holaplex <engineering@holaplex.com>",
+]
+description = "Holaplex Hub nfts solana service"
+readme = "./README.md"
+repository = "https://github.com/holaplex/hub-nfts-solana"
+license = "AGPL-3.0-or-later"
+categories = ["cryptography::cryptocurrencies", "web-programming"]
 
 [dependencies]
 holaplex-hub-nfts-solana-entity = { path = "../entity" }
