@@ -81,6 +81,7 @@ pub struct MintEditionAddresses {
     pub metadata: Pubkey,
     pub owner: Pubkey,
     pub associated_token_account: Pubkey,
+    pub recipient: Pubkey,
 }
 
 #[derive(Clone)]
@@ -293,6 +294,7 @@ impl Solana {
                 mint: new_mint_pubkey,
                 metadata: metadata_key,
                 associated_token_account: added_token_account,
+                recipient,
             },
         })
     }

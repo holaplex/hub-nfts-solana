@@ -177,6 +177,7 @@ impl Processor {
                         if status == TransactionStatus::Failed {
                             self.update_drop_failed(key, SolanaTransactionFailureReason::Sign)
                                 .await?;
+
                             return Ok(());
                         }
 
@@ -456,7 +457,7 @@ impl Processor {
             id,
             collection_id: collection.id,
             mint: tx.addresses.mint.to_string(),
-            owner: tx.addresses.owner.to_string(),
+            owner: tx.addresses.recipient.to_string(),
             associated_token_account: Some(tx.addresses.associated_token_account.to_string()),
             created_at: Utc::now().naive_utc(),
         };
@@ -513,7 +514,7 @@ impl Processor {
         let mut collection_mint: collection_mints::ActiveModel = collection_mint.into();
 
         collection_mint.mint = Set(tx.addresses.mint.to_string());
-        collection_mint.owner = Set(tx.addresses.owner.to_string());
+        collection_mint.owner = Set(tx.addresses.recipient.to_string());
         collection_mint.associated_token_account =
             Set(Some(tx.addresses.associated_token_account.to_string()));
 
