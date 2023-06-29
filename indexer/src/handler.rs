@@ -1,5 +1,6 @@
 use std::{convert::TryInto, sync::Arc};
 
+use backoff::ExponentialBackoff;
 use dashmap::DashMap;
 use futures::{sink::SinkExt, stream::StreamExt};
 use holaplex_hub_nfts_solana_core::{
@@ -100,7 +101,7 @@ impl MessageHandler {
         let message = tx
             .transaction
             .clone()
-            .context("SubsribeTransactionInfo not found")?
+            .context("SubscribeTransactionInfo not found")?
             .transaction
             .context("Transaction not found")?
             .message
@@ -125,65 +126,95 @@ impl MessageHandler {
                 let data = ins.data.clone();
                 let data = data.as_slice();
                 let tkn_instruction = spl_token::instruction::TokenInstruction::unpack(data)?;
-                if let TokenInstruction::Transfer { amount } = tkn_instruction {
-                    if amount == 1 {
-                        let sig = tx
-                            .transaction
-                            .as_ref()
-                            .ok_or_else(|| anyhow!("failed to get transaction"))?
-                            .signature
-                            .clone();
 
-                        let source_account_index = account_indices[0];
-                        let source_bytes = &keys[source_account_index as usize];
-                        let source = Pubkey::try_from(source_bytes.clone())
-                            .map_err(|_| anyhow!("failed to parse pubkey"))?;
+                let transfer_info = match tkn_instruction {
+                    TokenInstruction::TransferChecked { amount, .. } => Some((amount, 2)),
+                    TokenInstruction::Transfer { amount } => Some((amount, 1)),
+                    _ => None,
+                };
 
-                        let collection_mint =
-                            CollectionMint::find_by_ata(&self.db, source.to_string()).await?;
+                if transfer_info.is_none() {
+                    continue;
+                }
 
-                        if collection_mint.is_none() {
-                            return Ok(());
-                        }
+                if let Some((1, destination_ata_index)) = transfer_info {
+                    let sig = tx
+                        .transaction
+                        .as_ref()
+                        .ok_or_else(|| anyhow!("failed to get transaction"))?
+                        .signature
+                        .clone();
 
-                        let destination_account_index = account_indices[1];
-                        let destination_bytes = &keys[destination_account_index as usize];
-                        let destination = Pubkey::try_from(destination_bytes.clone())
-                            .map_err(|_| anyhow!("failed to parse pubkey"))?;
-                        let acct = &self.rpc.get_account(&destination)?;
-                        let destination_tkn_act = Account::unpack(&acct.data)?;
-                        let new_owner = destination_tkn_act.owner.to_string();
-                        let mint = collection_mint.context("No mint found")?;
+                    let source_account_index = account_indices[0];
+                    let source_bytes = &keys[source_account_index as usize];
+                    let source = Pubkey::try_from(source_bytes.clone())
+                        .map_err(|_| anyhow!("failed to parse pubkey"))?;
 
-                        CollectionMint::update_owner_and_ata(
-                            &self.db,
-                            &mint,
-                            new_owner.clone(),
-                            destination.to_string(),
+                    info!("Transfer from: {}", source);
+                    info!(
+                        "Transaction signature: {:?}",
+                        Signature::new(sig.as_slice()).to_string()
+                    );
+
+                    let collection_mint =
+                        CollectionMint::find_by_ata(&self.db, source.to_string()).await?;
+
+                    if collection_mint.is_none() {
+                        return Ok(());
+                    }
+
+                    let destination_account_index = account_indices[destination_ata_index];
+                    let destination_bytes = &keys[destination_account_index as usize];
+                    let destination = Pubkey::try_from(destination_bytes.clone())
+                        .map_err(|_| anyhow!("failed to parse pubkey"))?;
+
+                    let acct = fetch_account(&self.rpc, &destination).await?;
+                    let destination_tkn_act = Account::unpack(&acct.data)?;
+                    let new_owner = destination_tkn_act.owner.to_string();
+                    let mint = collection_mint.context("No mint found")?;
+
+                    info!("Destination ata: {:?}", destination_tkn_act);
+
+                    CollectionMint::update_owner_and_ata(
+                        &self.db,
+                        &mint,
+                        new_owner.clone(),
+                        destination.to_string(),
+                    )
+                    .await?;
+
+                    self.producer
+                        .send(
+                            Some(&SolanaNftEvents {
+                                event: Some(UpdateMintOwner(MintOwnershipUpdate {
+                                    mint_address: destination_tkn_act.mint.to_string(),
+                                    sender: mint.owner.to_string(),
+                                    recipient: new_owner,
+                                    tx_signature: Signature::new(sig.as_slice()).to_string(),
+                                })),
+                            }),
+                            Some(&SolanaNftEventKey {
+                                id: mint.id.to_string(),
+                                ..Default::default()
+                            }),
                         )
                         .await?;
-
-                        self.producer
-                            .send(
-                                Some(&SolanaNftEvents {
-                                    event: Some(UpdateMintOwner(MintOwnershipUpdate {
-                                        mint_address: destination_tkn_act.mint.to_string(),
-                                        sender: mint.owner.to_string(),
-                                        recipient: new_owner,
-                                        tx_signature: Signature::new(sig.as_slice()).to_string(),
-                                    })),
-                                }),
-                                Some(&SolanaNftEventKey {
-                                    id: mint.id.to_string(),
-                                    ..Default::default()
-                                }),
-                            )
-                            .await?;
-                    }
                 }
             }
         }
 
         Ok(())
     }
+}
+
+async fn fetch_account(
+    rpc: &Arc<RpcClient>,
+    address: &Pubkey,
+) -> Result<solana_sdk::account::Account, solana_client::client_error::ClientError> {
+    backoff::future::retry(ExponentialBackoff::default(), || async {
+        let acct = rpc.get_account(address)?;
+
+        Ok(acct)
+    })
+    .await
 }

@@ -27,6 +27,8 @@ yellowstone-grpc-proto = { git = "https://github.com/rpcpool/yellowstone-grpc", 
 dashmap = "5.4.0"
 spl-token = "=3.5.0"
 solana-client = "=1.14.18"
+backoff = { version = "0.4.0", features = ["tokio"] }
+
 
 [dependencies.hub-core]
 package = "holaplex-hub-core"

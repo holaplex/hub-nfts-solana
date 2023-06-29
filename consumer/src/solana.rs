@@ -292,7 +292,7 @@ impl Solana {
                 mint: new_mint_pubkey,
                 metadata: metadata_key,
                 associated_token_account: added_token_account,
-                recipient: recipient,
+                recipient,
             },
         })
     }
