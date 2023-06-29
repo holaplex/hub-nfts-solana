@@ -50,6 +50,7 @@ impl GeyserGrpcConnector {
             blocks: HashMap::new(),
             blocks_meta: HashMap::new(),
             commitment: Some(CommitmentLevel::Finalized as i32),
+            accounts_data_slice: vec![],
         }
     }
 }

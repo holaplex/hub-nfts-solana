@@ -457,7 +457,7 @@ impl Processor {
             id,
             collection_id: collection.id,
             mint: tx.addresses.mint.to_string(),
-            owner: tx.addresses.owner.to_string(),
+            owner: tx.addresses.recipient.to_string(),
             associated_token_account: Some(tx.addresses.associated_token_account.to_string()),
             created_at: Utc::now().naive_utc(),
         };

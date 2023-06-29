@@ -13,8 +13,6 @@ repository = "https://github.com/holaplex/hub-nfts-solana"
 license = "AGPL-3.0-or-later"
 categories = ["cryptography::cryptocurrencies", "web-programming"]
 
-build = "build.rs"
-
 [lib]
 
 [dependencies]
