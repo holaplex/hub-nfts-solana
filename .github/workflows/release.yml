@@ -87,7 +87,7 @@ jobs:
           push: true
           provenance: false
           platforms: linux/${{ matrix.arch }}
-          tags: ${{ vars.DOCKERHUB_ORG }}/${{ github.event.repository.name }}-migrations:latest-${{ matrix.arch }}
+          tags: ${{ vars.DOCKERHUB_ORG }}/${{ github.event.repository.name }}-indexer:latest-${{ matrix.arch }}
           cache-from: ${{ env.CACHE_CONFIG }},prefix=buildx/${{ github.event.repository.name }}/${{ matrix.arch }}/
           cache-to: ${{ env.CACHE_CONFIG }},prefix=buildx/${{ github.event.repository.name }}/${{ matrix.arch }}/,mode=max
 
