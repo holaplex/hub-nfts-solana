@@ -25,6 +25,7 @@ COPY migration migration
 COPY entity entity
 COPY core core
 COPY consumer consumer
+COPY indexer indexer
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
@@ -37,12 +38,16 @@ COPY migration migration
 COPY entity entity
 COPY core core
 COPY consumer consumer
+COPY indexer indexer
 
 FROM builder AS builder-hub-nfts-solana
 RUN cargo build --release --bin holaplex-hub-nfts-solana
 
 FROM builder AS builder-migration
 RUN cargo build --release --bin migration
+
+FROM builder AS builder-solana-indexer
+RUN cargo build --release --bin solana-indexer
 
 
 FROM debian:bullseye-slim as base
@@ -72,3 +77,7 @@ CMD ["/usr/local/bin/holaplex-hub-nfts-solana"]
 FROM base AS migrator
 COPY --from=builder-migration /app/target/release/migration bin/
 CMD ["bin/migration"]
+
+FROM base AS solana-indexer
+COPY --from=builder-solana-indexer /app/target/release/solana-indexer /usr/local/bin
+CMD ["/usr/local/bin/solana-indexer"]

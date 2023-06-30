@@ -3,7 +3,7 @@ use solana_indexer::MessageHandler;
 
 pub fn main() {
     let opts = hub_core::StartConfig {
-        service_name: "hub-nfts-solana",
+        service_name: "hub-nfts-solana-indexer",
     };
 
     hub_core::run(opts, |common, args| {

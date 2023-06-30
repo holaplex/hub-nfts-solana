@@ -8,13 +8,13 @@ use hub_core::clap;
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
-    #[arg(short, long, env)]
-    pub endpoint: String,
+    #[arg(long, env)]
+    pub dragon_mouth_endpoint: String,
 
-    #[arg(short, long, env)]
-    pub x_token: Option<String>,
+    #[arg(long, env)]
+    pub dragon_mouth_x_token: Option<String>,
 
-    #[arg(short, long, env)]
+    #[arg(long, env)]
     pub solana_endpoint: String,
 
     #[command(flatten)]

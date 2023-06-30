@@ -36,8 +36,8 @@ pub struct MessageHandler {
 impl MessageHandler {
     pub async fn new(args: Args, producer: Producer<SolanaNftEvents>) -> Result<Self> {
         let Args {
-            endpoint,
-            x_token,
+            dragon_mouth_endpoint,
+            dragon_mouth_x_token,
             solana_endpoint,
             db,
         } = args;
@@ -47,7 +47,7 @@ impl MessageHandler {
             .context("failed to get database connection")?;
         let dashmap: DashMap<u64, Vec<SubscribeUpdateTransaction>> = DashMap::new();
         let rpc = Arc::new(RpcClient::new(solana_endpoint));
-        let connector = GeyserGrpcConnector::new(endpoint, x_token);
+        let connector = GeyserGrpcConnector::new(dragon_mouth_endpoint, dragon_mouth_x_token);
 
         Ok(Self {
             db,
@@ -150,12 +150,6 @@ impl MessageHandler {
                     let source = Pubkey::try_from(source_bytes.clone())
                         .map_err(|_| anyhow!("failed to parse pubkey"))?;
 
-                    info!("Transfer from: {}", source);
-                    info!(
-                        "Transaction signature: {:?}",
-                        Signature::new(sig.as_slice()).to_string()
-                    );
-
                     let collection_mint =
                         CollectionMint::find_by_ata(&self.db, source.to_string()).await?;
 
@@ -172,8 +166,6 @@ impl MessageHandler {
                     let destination_tkn_act = Account::unpack(&acct.data)?;
                     let new_owner = destination_tkn_act.owner.to_string();
                     let mint = collection_mint.context("No mint found")?;
-
-                    info!("Destination ata: {:?}", destination_tkn_act);
 
                     CollectionMint::update_owner_and_ata(
                         &self.db,
