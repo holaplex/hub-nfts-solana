@@ -13,6 +13,7 @@ env:
   SERVICE_NAME: nfts-solana
   DOCKERHUB_REPO: ${{ vars.DOCKERHUB_ORG }}/${{ github.event.repository.name }}
   DOCKERHUB_MIGRATIONS_REPO: ${{ vars.DOCKERHUB_ORG }}/${{ github.event.repository.name }}-migrations
+  DOCKERHUB_INDEXER_REPO: ${{ vars.DOCKERHUB_ORG }}/${{ github.event.repository.name }}-indexer
   CACHE_CONFIG: type=s3,region=${{ vars.AWS_REGION }},bucket=${{ vars.AWS_BUCKET }},access_key_id=${{ secrets.AWS_ACCESS_KEY_ID }},secret_access_key=${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
 
@@ -76,6 +77,19 @@ jobs:
           tags: ${{ vars.DOCKERHUB_ORG }}/${{ github.event.repository.name }}-migrations:latest-${{ matrix.arch }}
           cache-from: ${{ env.CACHE_CONFIG }},prefix=buildx/${{ github.event.repository.name }}/${{ matrix.arch }}/
           cache-to: ${{ env.CACHE_CONFIG }},prefix=buildx/${{ github.event.repository.name }}/${{ matrix.arch }}/,mode=max
+      -
+        name: Build and push ${{ github.event.repository.name }}-indexer
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          file: ./Dockerfile
+          target: solana-indexer
+          push: true
+          provenance: false
+          platforms: linux/${{ matrix.arch }}
+          tags: ${{ vars.DOCKERHUB_ORG }}/${{ github.event.repository.name }}-migrations:latest-${{ matrix.arch }}
+          cache-from: ${{ env.CACHE_CONFIG }},prefix=buildx/${{ github.event.repository.name }}/${{ matrix.arch }}/
+          cache-to: ${{ env.CACHE_CONFIG }},prefix=buildx/${{ github.event.repository.name }}/${{ matrix.arch }}/,mode=max
 
   finalize:
     needs: build
@@ -100,6 +114,13 @@ jobs:
         with:
           inputs: ${{ env.DOCKERHUB_MIGRATIONS_REPO }}:latest,${{ env.DOCKERHUB_MIGRATIONS_REPO }}:${{ github.sha }}
           images: ${{ env.DOCKERHUB_MIGRATIONS_REPO }}:latest-amd64,${{ env.DOCKERHUB_MIGRATIONS_REPO }}:latest-arm64
+          push: true
+
+      - name: Merge indexer image tags
+        uses: Noelware/docker-manifest-action@master
+        with:
+          inputs: ${{ env.DOCKERHUB_INDEXER_REPO }}:latest,${{ env.DOCKERHUB_INDEXER_REPO }}:${{ github.sha }}
+          images: ${{ env.DOCKERHUB_INDEXER_REPO }}:latest-amd64,${{ env.DOCKERHUB_INDEXER_REPO }}:latest-arm64
           push: true
 
       - name: Setup variables

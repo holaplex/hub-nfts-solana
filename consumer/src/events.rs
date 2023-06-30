@@ -1,8 +1,5 @@
-use holaplex_hub_nfts_solana_core::{db::Connection, sea_orm::Set, Collection, CollectionMint};
-use holaplex_hub_nfts_solana_entity::{collection_mints, collections};
-use hub_core::{chrono::Utc, prelude::*, producer::Producer, thiserror::Error, uuid::Uuid};
-
-use crate::{
+use holaplex_hub_nfts_solana_core::{
+    db::Connection,
     proto::{
         nft_events::Event::{
             SolanaCreateDrop, SolanaMintDrop, SolanaRetryDrop, SolanaRetryMintDrop,
@@ -17,15 +14,19 @@ use crate::{
             UpdateDropSigningRequested, UpdateDropSubmitted,
         },
         treasury_events::{Event as TreasuryEvent, TransactionStatus},
-        MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction, NftEventKey,
+        MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction,
         SolanaCompletedMintTransaction, SolanaCompletedTransferTransaction,
         SolanaCompletedUpdateTransaction, SolanaFailedTransaction, SolanaNftEventKey,
         SolanaNftEvents, SolanaPendingTransaction, SolanaTransactionFailureReason,
-        TransferMetaplexAssetTransaction, TreasuryEventKey,
+        TransferMetaplexAssetTransaction,
     },
-    solana::{MasterEditionAddresses, Solana, TransactionResponse},
-    Services,
+    sea_orm::Set,
+    Collection, CollectionMint, Services,
 };
+use holaplex_hub_nfts_solana_entity::{collection_mints, collections};
+use hub_core::{chrono::Utc, prelude::*, producer::Producer, thiserror::Error, uuid::Uuid};
+
+use crate::solana::{MasterEditionAddresses, Solana, TransactionResponse};
 
 #[derive(Error, Debug)]
 pub enum ProcessorError {
@@ -761,37 +762,6 @@ impl Processor {
             .await?;
 
         Ok(())
-    }
-}
-
-impl From<TreasuryEventKey> for SolanaNftEventKey {
-    fn from(key: TreasuryEventKey) -> Self {
-        let TreasuryEventKey {
-            user_id,
-            id,
-            project_id,
-        } = key;
-        Self {
-            id,
-            user_id,
-            project_id,
-        }
-    }
-}
-
-impl From<NftEventKey> for SolanaNftEventKey {
-    fn from(key: NftEventKey) -> Self {
-        let NftEventKey {
-            user_id,
-            project_id,
-            id,
-        } = key;
-
-        Self {
-            id,
-            user_id,
-            project_id,
-        }
     }
 }
 

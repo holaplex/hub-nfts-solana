@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use holaplex_hub_nfts_solana::{events::Processor, proto, solana::Solana, Args, Services};
-use holaplex_hub_nfts_solana_core::db::Connection;
+use holaplex_hub_nfts_solana::{events::Processor, solana::Solana, Args};
+use holaplex_hub_nfts_solana_core::{db::Connection, proto::SolanaNftEvents, Services};
 use hub_core::{prelude::*, tokio};
 use solana_client::rpc_client::RpcClient;
 
@@ -18,10 +18,7 @@ pub fn main() {
                 .await
                 .context("failed to get database connection")?;
 
-            let producer = common
-                .producer_cfg
-                .build::<proto::SolanaNftEvents>()
-                .await?;
+            let producer = common.producer_cfg.build::<SolanaNftEvents>().await?;
 
             let solana_rpc = Arc::new(RpcClient::new(solana.solana_endpoint));
             let solana = Solana::new(solana_rpc, solana.solana_treasury_wallet_address);

@@ -13,17 +13,27 @@ repository = "https://github.com/holaplex/hub-nfts-solana"
 license = "AGPL-3.0-or-later"
 categories = ["cryptography::cryptocurrencies", "web-programming"]
 
+build = "build.rs"
+
 [dependencies]
 holaplex-hub-nfts-solana-entity = { path = "../entity" }
-sea-orm = { version = "^0.10.0", features = [
+sea-orm = { version = "0.11.3", features = [
   "debug-print",
   "runtime-tokio-rustls",
   "sqlx-postgres",
 ] }
+prost = "0.11.9"
+mpl-token-metadata = "1.8.3"
 
 [dependencies.hub-core]
 package = "holaplex-hub-core"
 version = "0.2.0"
 git = "https://github.com/holaplex/hub-core"
 branch = "stable"
-features = []
+features = ["kafka"]
+
+[build-dependencies.hub-core-build]
+package = "holaplex-hub-core-build"
+version = "0.2.0"
+git = "https://github.com/holaplex/hub-core"
+branch = "stable"
