@@ -1,14 +1,6 @@
-use std::sync::Arc;
-
-use holaplex_hub_nfts_solana::{
-    events::Processor,
-    solana::{Solana, SolanaArgs},
-    solana_compressed::SolanaCompressed,
-    Args,
-};
+use holaplex_hub_nfts_solana::{events::Processor, solana::Solana, Args};
 use holaplex_hub_nfts_solana_core::{db::Connection, proto::SolanaNftEvents, Services};
 use hub_core::{prelude::*, tokio};
-use solana_client::rpc_client::RpcClient;
 
 pub fn main() {
     let opts = hub_core::StartConfig {
@@ -16,38 +8,19 @@ pub fn main() {
     };
 
     hub_core::run(opts, |common, args| {
-        let Args {
-            db,
-            solana:
-                SolanaArgs {
-                    solana_endpoint,
-                    solana_treasury_wallet_address,
-                },
-            solana_compressed,
-        } = args;
+        let Args { db, solana } = args;
 
         common.rt.block_on(async move {
             let connection = Connection::new(db)
                 .await
                 .context("failed to get database connection")?;
 
-            let producer = common
-                .producer_cfg
-                .build::<SolanaNftEvents>()
-                .await?;
+            let producer = common.producer_cfg.build::<SolanaNftEvents>().await?;
 
-            let solana_rpc = Arc::new(RpcClient::new(solana_endpoint));
-            let solana = Solana::new(solana_rpc.clone(), solana_treasury_wallet_address.clone());
-            let compressed = SolanaCompressed::new(
-                solana_rpc,
-                solana_treasury_wallet_address
-                    .parse()
-                    .context("Error parsing treasury wallet address")?,
-                solana_compressed,
-            );
+            let solana = Solana::new(solana)?;
 
             let cons = common.consumer_cfg.build::<Services>().await?;
-            let event_processor = Processor::new(solana, compressed, connection, producer);
+            let event_processor = Processor::new(solana, connection, producer);
 
             let mut stream = cons.stream();
             loop {

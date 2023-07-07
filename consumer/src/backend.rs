@@ -54,27 +54,45 @@ pub struct TransactionResponse<A> {
     pub addresses: A,
 }
 
-pub trait Backend {
+// TODO: include this in collections::Model
+pub enum CollectionType {
+    Legacy,
+    Verified,
+}
+
+// Legacy, Verified
+#[async_trait]
+pub trait CollectionBackend {
     fn create(
         &self,
         txn: MetaplexMasterEditionTransaction,
     ) -> Result<TransactionResponse<MasterEditionAddresses>>;
+}
 
+// Uncompressed, Compressed
+#[async_trait]
+pub trait MintBackend {
     fn mint(
         &self,
+        collection_ty: CollectionType,
         collection: &collections::Model,
         txn: MintMetaplexEditionTransaction,
     ) -> Result<TransactionResponse<MintEditionAddresses>>;
 
-    fn update(
+    // TODO: probably better to replace all errors here with an Error enum
+    fn try_update(
         &self,
+        collection_ty: CollectionType,
         collection: &collections::Model,
         txn: MetaplexMasterEditionTransaction,
-    ) -> Result<TransactionResponse<UpdateMasterEditionAddresses>>;
+    ) -> Result<Option<TransactionResponse<UpdateMasterEditionAddresses>>>;
 
-    fn transfer(
+    // Right now only this one needs to be async to support hitting the asset
+    // API for transfer data
+    async fn transfer(
         &self,
-        mint: &collection_mints::Model,
+        collection_ty: CollectionType,
+        collection_mint: &collection_mints::Model,
         txn: TransferMetaplexAssetTransaction,
     ) -> Result<TransactionResponse<TransferAssetAddresses>>;
 }

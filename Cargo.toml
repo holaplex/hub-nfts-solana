@@ -1,7 +1,3 @@
 [workspace]
 members = ["consumer", "core", "entity", "migration", "indexer"]
 resolver = "2"
-
-[workspace.dependencies]
-holaplex-hub-nfts-solana-core = { path = "core" }
-holaplex-hub-nfts-solana-entity = { path = "entity" }

@@ -28,8 +28,7 @@ use hub_core::{chrono::Utc, prelude::*, producer::Producer, thiserror::Error, uu
 
 use crate::{
     backend::{self, MasterEditionAddresses, TransactionResponse},
-    solana::Solana,
-    solana_compressed::SolanaCompressed,
+    solana::{Solana, UncompressedRef},
 };
 
 #[derive(Error, Debug)]
@@ -45,22 +44,15 @@ pub enum ProcessorError {
 #[derive(Clone)]
 pub struct Processor {
     solana: Solana,
-    compressed: SolanaCompressed,
     db: Connection,
     producer: Producer<SolanaNftEvents>,
 }
 
 impl Processor {
     #[must_use]
-    pub fn new(
-        solana: Solana,
-        compressed: SolanaCompressed,
-        db: Connection,
-        producer: Producer<SolanaNftEvents>,
-    ) -> Self {
+    pub fn new(solana: Solana, db: Connection, producer: Producer<SolanaNftEvents>) -> Self {
         Self {
             solana,
-            compressed,
             db,
             producer,
         }
@@ -76,93 +68,92 @@ impl Processor {
             Services::Nfts(key, e) => {
                 let key = SolanaNftEventKey::from(key);
 
-                if true {
-                    // TODO
-                    match e.event {
-                        Some(SolanaCreateDrop(payload)) => {
-                            let create_drop_result = self.create_drop(&self.solana, key.clone(), payload).await;
+                // TODO: swap UncompressedRef for CompressedRef or LegacyCollectionRef depending on
+                //       message context
 
-                            if create_drop_result.is_err() {
-                                self.create_drop_failed(
-                                    key,
-                                    SolanaTransactionFailureReason::Assemble,
-                                )
+                match e.event {
+                    Some(SolanaCreateDrop(payload)) => {
+                        let create_drop_result = self
+                            .create_drop(&UncompressedRef(&self.solana), key.clone(), payload)
+                            .await;
+
+                        if create_drop_result.is_err() {
+                            self.create_drop_failed(key, SolanaTransactionFailureReason::Assemble)
                                 .await?;
-                            }
+                        }
 
-                            Ok(())
-                        },
-                        Some(SolanaMintDrop(payload)) => {
-                            let mint_drop_result = self.mint_drop(&self.solana, key.clone(), payload).await;
+                        Ok(())
+                    },
+                    Some(SolanaMintDrop(payload)) => {
+                        let mint_drop_result = self
+                            .mint_drop(&UncompressedRef(&self.solana), key.clone(), payload)
+                            .await;
 
-                            if mint_drop_result.is_err() {
-                                self.mint_drop_failed(
-                                    key,
-                                    SolanaTransactionFailureReason::Assemble,
-                                )
+                        if mint_drop_result.is_err() {
+                            self.mint_drop_failed(key, SolanaTransactionFailureReason::Assemble)
                                 .await?;
-                            }
+                        }
 
-                            Ok(())
-                        },
-                        Some(SolanaUpdateDrop(payload)) => {
-                            let update_drop_result = self.update_drop(&self.solana, key.clone(), payload).await;
+                        Ok(())
+                    },
+                    Some(SolanaUpdateDrop(payload)) => {
+                        let update_drop_result = self
+                            .update_drop(&UncompressedRef(&self.solana), key.clone(), payload)
+                            .await;
 
-                            if update_drop_result.is_err() {
-                                self.update_drop_failed(
-                                    key,
-                                    SolanaTransactionFailureReason::Assemble,
-                                )
+                        if update_drop_result.is_err() {
+                            self.update_drop_failed(key, SolanaTransactionFailureReason::Assemble)
                                 .await?;
-                            }
+                        }
 
-                            Ok(())
-                        },
-                        Some(SolanaTransferAsset(payload)) => {
-                            let transfer_asset_result =
-                                self.transfer_asset(&self.solana, key.clone(), payload).await;
+                        Ok(())
+                    },
+                    Some(SolanaTransferAsset(payload)) => {
+                        let transfer_asset_result = self
+                            .transfer_asset(&UncompressedRef(&self.solana), key.clone(), payload)
+                            .await;
 
-                            if transfer_asset_result.is_err() {
-                                self.transfer_asset_failed(
-                                    key,
-                                    SolanaTransactionFailureReason::Assemble,
-                                )
-                                .await?;
-                            }
+                        if transfer_asset_result.is_err() {
+                            self.transfer_asset_failed(
+                                key,
+                                SolanaTransactionFailureReason::Assemble,
+                            )
+                            .await?;
+                        }
 
-                            Ok(())
-                        },
-                        Some(SolanaRetryDrop(payload)) => {
-                            let retry_drop_result = self.retry_drop(&self.solana, key.clone(), payload).await;
+                        Ok(())
+                    },
+                    Some(SolanaRetryDrop(payload)) => {
+                        let retry_drop_result = self
+                            .retry_drop(&UncompressedRef(&self.solana), key.clone(), payload)
+                            .await;
 
-                            if retry_drop_result.is_err() {
-                                self.retry_create_drop_failed(
-                                    key,
-                                    SolanaTransactionFailureReason::Assemble,
-                                )
-                                .await?;
-                            }
+                        if retry_drop_result.is_err() {
+                            self.retry_create_drop_failed(
+                                key,
+                                SolanaTransactionFailureReason::Assemble,
+                            )
+                            .await?;
+                        }
 
-                            Ok(())
-                        },
-                        Some(SolanaRetryMintDrop(payload)) => {
-                            let retry_mint_drop_result =
-                                self.retry_mint_drop(&self.solana, key.clone(), payload).await;
+                        Ok(())
+                    },
+                    Some(SolanaRetryMintDrop(payload)) => {
+                        let retry_mint_drop_result = self
+                            .retry_mint_drop(&UncompressedRef(&self.solana), key.clone(), payload)
+                            .await;
 
-                            if retry_mint_drop_result.is_err() {
-                                self.retry_mint_drop_failed(
-                                    key,
-                                    SolanaTransactionFailureReason::Assemble,
-                                )
-                                .await?;
-                            }
+                        if retry_mint_drop_result.is_err() {
+                            self.retry_mint_drop_failed(
+                                key,
+                                SolanaTransactionFailureReason::Assemble,
+                            )
+                            .await?;
+                        }
 
-                            Ok(())
-                        },
-                        Some(_) | None => Ok(()),
-                    }
-                } else {
-                    todo!()
+                        Ok(())
+                    },
+                    Some(_) | None => Ok(()),
                 }
             },
             Services::Treasury(key, e) => {
@@ -342,7 +333,7 @@ impl Processor {
         }
     }
 
-    async fn create_drop<B: backend::Backend>(
+    async fn create_drop<B: backend::CollectionBackend>(
         &self,
         backend: &B,
         key: SolanaNftEventKey,
@@ -404,7 +395,7 @@ impl Processor {
         Ok(())
     }
 
-    async fn retry_drop<B: backend::Backend>(
+    async fn retry_drop<B: backend::CollectionBackend>(
         &self,
         backend: &B,
         key: SolanaNftEventKey,
@@ -468,7 +459,7 @@ impl Processor {
         Ok(())
     }
 
-    async fn mint_drop<B: backend::Backend>(
+    async fn mint_drop<B: backend::MintBackend>(
         &self,
         backend: &B,
         key: SolanaNftEventKey,
@@ -481,7 +472,8 @@ impl Processor {
             .ok_or(ProcessorError::RecordNotFound)?;
 
         // TODO: the collection mint record may fail to be created if this fails. Need to handle upserting the record in retry mint.
-        let tx = backend.mint(&collection, payload)?;
+        let collection_ty = todo!("determine collection type");
+        let tx = backend.mint(collection_ty, &collection, payload)?;
 
         let collection_mint = collection_mints::Model {
             id,
@@ -525,7 +517,7 @@ impl Processor {
         Ok(())
     }
 
-    async fn retry_mint_drop<B: backend::Backend>(
+    async fn retry_mint_drop<B: backend::MintBackend>(
         &self,
         backend: &B,
         key: SolanaNftEventKey,
@@ -540,7 +532,8 @@ impl Processor {
 
         let collection = collection.ok_or(ProcessorError::RecordNotFound)?;
 
-        let tx = backend.mint(&collection, payload)?;
+        let collection_ty = todo!("determine collection type");
+        let tx = backend.mint(collection_ty, &collection, payload)?;
 
         let mut collection_mint: collection_mints::ActiveModel = collection_mint.into();
 
@@ -582,7 +575,7 @@ impl Processor {
         Ok(())
     }
 
-    async fn update_drop<B: backend::Backend>(
+    async fn update_drop<B: backend::MintBackend>(
         &self,
         backend: &B,
         key: SolanaNftEventKey,
@@ -593,7 +586,9 @@ impl Processor {
             .await?
             .ok_or(ProcessorError::RecordNotFound)?;
 
-        let tx = backend.update(&collection, payload)?;
+        let collection_ty = todo!("determine collection type");
+        let tx = backend.try_update(collection_ty, &collection, payload)?;
+        let Some(tx) = tx else { todo!("handle un-updateable assets") };
 
         self.producer
             .send(
@@ -626,7 +621,7 @@ impl Processor {
         Ok(())
     }
 
-    async fn transfer_asset<B: backend::Backend>(
+    async fn transfer_asset<B: backend::MintBackend>(
         &self,
         backend: &B,
         key: SolanaNftEventKey,
@@ -637,7 +632,12 @@ impl Processor {
             .await?
             .ok_or(ProcessorError::RecordNotFound)?;
 
-        let tx = backend.transfer(&collection_mint, payload)?;
+        let collection_ty = todo!("determine collection type");
+        let tx = backend.transfer(
+            collection_ty,
+            &collection_mint,
+            payload,
+        ).await?;
 
         self.producer
             .send(

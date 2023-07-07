@@ -32,6 +32,8 @@ mpl-bubblegum = "0.8.0"
 mpl-token-metadata = "1.8.3"
 holaplex-hub-nfts-solana-core = { path = "../core" }
 holaplex-hub-nfts-solana-entity = { path = "../entity" }
+jsonrpsee = { version = "0.18.2", features = ["macros", "http-client"] }
+bs58 = "0.5.0"
 
 [dependencies.hub-core]
 package = "holaplex-hub-core"
