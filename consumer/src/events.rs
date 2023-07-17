@@ -417,29 +417,30 @@ impl Processor {
         let tx = backend
             .create(payload.clone())
             .map_err(ProcessorErrorKind::Solana)?;
+    
+            let MasterEditionAddresses {
+                metadata,
+                associated_token_account,
+                mint,
+                master_edition,
+                update_authority,
+                owner,
+            } = tx.addresses;
+            let id = key.id.parse()?;
+    
+            let edition = editions::Model {
+                id,
+                master_edition: master_edition.to_string(),
+                owner: owner.to_string(),
+                metadata: metadata.to_string(),
+                associated_token_account: associated_token_account.to_string(),
+                mint: mint.to_string(),
+                update_authority: update_authority.to_string(),
+                ..Default::default()
+            };
+    
+            Edition::create(&self.db, edition).await?;
 
-        let MasterEditionAddresses {
-            metadata,
-            associated_token_account,
-            mint,
-            master_edition,
-            update_authority,
-            owner,
-        } = tx.addresses;
-        let id = key.id.parse()?;
-
-        let collection = collections::Model {
-            id,
-            master_edition: master_edition.to_string(),
-            owner: owner.to_string(),
-            metadata: metadata.to_string(),
-            associated_token_account: associated_token_account.to_string(),
-            mint: mint.to_string(),
-            update_authority: update_authority.to_string(),
-            ..Default::default()
-        };
-
-        Collection::create(&self.db, collection).await?;
 
         Ok(tx.into())
     }
@@ -536,20 +537,20 @@ impl Processor {
         } = tx.addresses;
 
         let collection_id = Uuid::parse_str(&key.id.clone())?;
-        let collection = Collection::find_by_id(&self.db, collection_id)
+        let edition = Edition::find_by_id(&self.db, collection_id)
             .await?
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
-        let mut collection: collections::ActiveModel = collection.into();
+        let mut edition: editions::ActiveModel = edition.into();
 
-        collection.master_edition = Set(metadata.to_string());
-        collection.associated_token_account = Set(associated_token_account.to_string());
-        collection.mint = Set(mint.to_string());
-        collection.master_edition = Set(master_edition.to_string());
-        collection.update_authority = Set(update_authority.to_string());
-        collection.owner = Set(owner.to_string());
+        edition.master_edition = Set(metadata.to_string());
+        edition.associated_token_account = Set(associated_token_account.to_string());
+        edition.mint = Set(mint.to_string());
+        edition.master_edition = Set(master_edition.to_string());
+        edition.update_authority = Set(update_authority.to_string());
+        edition.owner = Set(owner.to_string());
 
-        Collection::update(&self.db, collection).await?;
+        Edition::update(&self.db, edition).await?;
 
         Ok(tx.into())
     }
@@ -562,17 +563,6 @@ impl Processor {
     ) -> ProcessResult<SolanaPendingTransaction> {
         let id = Uuid::parse_str(&key.id.clone())?;
 
-        let (collection_mint, collection) =
-            CollectionMint::find_by_id_with_collection(&self.db, id)
-                .await?
-                .ok_or(ProcessorErrorKind::RecordNotFound)?;
-
-        let collection = collection.ok_or(ProcessorErrorKind::RecordNotFound)?;
-
-        let collection_ty = todo!("determine collection type");
-        let tx = backend
-            .mint(collection_ty, &collection, payload)
-            .map_err(ProcessorErrorKind::Solana)?;
 
         let mut collection_mint: collection_mints::ActiveModel = collection_mint.into();
 

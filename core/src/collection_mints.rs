@@ -1,6 +1,6 @@
 use holaplex_hub_nfts_solana_entity::{
     collection_mints::{ActiveModel, Column, Entity, Model, Relation},
-    collections,
+    editions,
 };
 use sea_orm::{prelude::*, JoinType, QuerySelect, Set};
 
@@ -46,15 +46,15 @@ impl CollectionMint {
             .await
     }
 
-    pub async fn find_by_id_with_collection(
+    pub async fn find_by_id_with_edition(
         db: &Connection,
         id: Uuid,
-    ) -> Result<Option<(Model, Option<collections::Model>)>, DbErr> {
+    ) -> Result<Option<(Model, Option<editions::Model>)>, DbErr> {
         let conn = db.get();
 
         Entity::find()
-            .find_also_related(collections::Entity)
-            .join(JoinType::InnerJoin, Relation::Collections.def())
+            .join(JoinType::InnerJoin, Relation::Editions.def())
+            .find_also_related(editions::Entity)
             .filter(Column::Id.eq(id))
             .one(conn)
             .await

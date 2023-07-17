@@ -3,11 +3,11 @@
 #![allow(clippy::module_name_repetitions)]
 
 mod collection_mints;
-mod collections;
+mod editions;
 pub mod db;
 
 pub use collection_mints::CollectionMint;
-pub use collections::Collection;
+pub use editions::Edition;
 use hub_core::{consumer::RecvError, prelude::*};
 use proto::{NftEventKey, SolanaNftEventKey, TreasuryEventKey};
 pub use sea_orm;

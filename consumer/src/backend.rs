@@ -1,4 +1,4 @@
-use holaplex_hub_nfts_solana_entity::{collection_mints, collections};
+use holaplex_hub_nfts_solana_entity::{collection_mints, editions};
 
 use holaplex_hub_nfts_solana_core::proto::{
     MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction, SolanaPendingTransaction,
@@ -41,6 +41,14 @@ pub struct TransferAssetAddresses {
     pub owner_associated_token_account: Pubkey,
 }
 
+pub struct CertifiedCollectionAddresses {
+    pub owner: Pubkey,
+    pub mint: Pubkey,
+    pub associated_token_account: Pubkey,
+    pub update_authority: Pubkey,
+    pub metadata: Pubkey,
+}
+
 /// Represents a response from a transaction on the blockchain. This struct
 /// provides the serialized message and the signatures of the signed message.
 pub struct TransactionResponse<A> {
@@ -77,7 +85,7 @@ pub enum CollectionType {
 
 // Legacy, Verified
 #[async_trait]
-pub trait CollectionBackend {
+pub trait CollectionBackend<T, R> {
     fn create(
         &self,
         txn: MetaplexMasterEditionTransaction,
@@ -90,7 +98,7 @@ pub trait MintBackend {
     fn mint(
         &self,
         collection_ty: CollectionType,
-        collection: &collections::Model,
+        edition: &editions::Model,
         txn: MintMetaplexEditionTransaction,
     ) -> Result<TransactionResponse<MintEditionAddresses>>;
 
@@ -98,7 +106,7 @@ pub trait MintBackend {
     fn try_update(
         &self,
         collection_ty: CollectionType,
-        collection: &collections::Model,
+        edition: &editions::Model,
         txn: MetaplexMasterEditionTransaction,
     ) -> Result<Option<TransactionResponse<UpdateMasterEditionAddresses>>>;
 

@@ -1,11 +1,11 @@
-use holaplex_hub_nfts_solana_entity::collections::{ActiveModel, Column, Entity, Model};
+use holaplex_hub_nfts_solana_entity::editions::{ActiveModel, Column, Entity, Model};
 use sea_orm::prelude::*;
 
 use crate::db::Connection;
 
-pub struct Collection;
+pub struct Edition;
 
-impl Collection {
+impl Edition {
     pub async fn create(db: &Connection, model: Model) -> Result<Model, DbErr> {
         let conn = db.get();
 
