@@ -2,10 +2,12 @@
 #![warn(clippy::pedantic, clippy::cargo)]
 #![allow(clippy::module_name_repetitions)]
 
+mod certified_collections;
 mod collection_mints;
-mod editions;
 pub mod db;
+mod editions;
 
+pub use certified_collections::CertifiedCollection;
 pub use collection_mints::CollectionMint;
 pub use editions::Edition;
 use hub_core::{consumer::RecvError, prelude::*};

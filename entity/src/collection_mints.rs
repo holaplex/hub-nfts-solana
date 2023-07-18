@@ -28,11 +28,25 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     Editions,
+    #[sea_orm(
+        belongs_to = "super::certified_collections::Entity",
+        from = "Column::CollectionId",
+        to = "super::certified_collections::Column::Id",
+        on_update = "Cascade",
+        on_delete = "Cascade"
+    )]
+    CertifiedCollections,
 }
 
 impl Related<super::editions::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Editions.def()
+    }
+}
+
+impl Related<super::certified_collections::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::CertifiedCollections.def()
     }
 }
 

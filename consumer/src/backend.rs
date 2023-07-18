@@ -34,6 +34,12 @@ pub struct UpdateMasterEditionAddresses {
 }
 
 #[derive(Clone)]
+pub struct UpdateCertifiedCollectionAddresses {
+    pub metadata: Pubkey,
+    pub update_authority: Pubkey,
+}
+
+#[derive(Clone)]
 pub struct TransferAssetAddresses {
     pub owner: Pubkey,
     pub recipient: Pubkey,
@@ -85,11 +91,11 @@ pub enum CollectionType {
 
 // Legacy, Verified
 #[async_trait]
-pub trait CollectionBackend<T, R> {
-    fn create(
-        &self,
-        txn: MetaplexMasterEditionTransaction,
-    ) -> Result<TransactionResponse<MasterEditionAddresses>>;
+pub trait CollectionBackend<T, C, U, M> {
+    fn create(&self, txn: T) -> Result<TransactionResponse<C>>;
+
+    // TODO: probably better to replace all errors here with an Error enum
+    fn try_update(&self, collection: &M, txn: T) -> Result<Option<TransactionResponse<U>>>;
 }
 
 // Uncompressed, Compressed
@@ -101,14 +107,6 @@ pub trait MintBackend {
         edition: &editions::Model,
         txn: MintMetaplexEditionTransaction,
     ) -> Result<TransactionResponse<MintEditionAddresses>>;
-
-    // TODO: probably better to replace all errors here with an Error enum
-    fn try_update(
-        &self,
-        collection_ty: CollectionType,
-        edition: &editions::Model,
-        txn: MetaplexMasterEditionTransaction,
-    ) -> Result<Option<TransactionResponse<UpdateMasterEditionAddresses>>>;
 
     // Right now only this one needs to be async to support hitting the asset
     // API for transfer data

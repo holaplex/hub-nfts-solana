@@ -1,13 +1,15 @@
 use anchor_lang::{prelude::AccountMeta, InstructionData};
 use holaplex_hub_nfts_solana_core::proto::{
-    treasury_events::SolanaTransactionResult, MasterEdition, MetaplexMasterEditionTransaction,
-    MintMetaplexEditionTransaction, TransferMetaplexAssetTransaction, MetaplexCertifiedCollectionTransaction,
+    treasury_events::SolanaTransactionResult, MasterEdition,
+    MetaplexCertifiedCollectionTransaction, MetaplexMasterEditionTransaction, MetaplexMetadata,
+    MintMetaplexEditionTransaction, TransferMetaplexAssetTransaction,
 };
-use holaplex_hub_nfts_solana_entity::{collection_mints, editions};
+use holaplex_hub_nfts_solana_entity::{certified_collections, collection_mints, editions};
 use hub_core::{anyhow::Result, clap, prelude::*, thiserror::Error, uuid::Uuid};
 use mpl_token_metadata::{
+    assertions::metadata,
     instruction::{mint_new_edition_from_master_edition_via_token, update_metadata_accounts_v2},
-    state::{Creator, DataV2, EDITION, PREFIX}, assertions::metadata,
+    state::{Creator, DataV2, EDITION, PREFIX},
 };
 use solana_client::rpc_client::RpcClient;
 use solana_program::{
@@ -30,10 +32,11 @@ use spl_token::{
 use crate::{
     asset_api::RpcClient as _,
     backend::{
-        CollectionBackend, CollectionType, MasterEditionAddresses, MintBackend,
-        MintEditionAddresses, TransactionResponse, TransferAssetAddresses,
-        UpdateMasterEditionAddresses, CertifiedCollectionAddresses,
-    }, events::ProcessorError,
+        CertifiedCollectionAddresses, CollectionBackend, CollectionType, MasterEditionAddresses,
+        MintBackend, MintEditionAddresses, TransactionResponse, TransferAssetAddresses,
+        UpdateCertifiedCollectionAddresses, UpdateMasterEditionAddresses,
+    },
+    events::ProcessorError,
 };
 
 const TOKEN_PROGRAM_PUBKEY: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
@@ -165,9 +168,16 @@ pub struct UncompressedRef<'a>(pub &'a Solana);
 #[repr(transparent)]
 pub struct CompressedRef<'a>(pub &'a Solana);
 #[repr(transparent)]
-pub struct LegacyCollectionRef<'a>(pub &'a Solana);
+pub struct EditionCollectionRef<'a>(pub &'a Solana);
 
-impl<'a> CollectionBackend for UncompressedRef<'a> {
+impl<'a>
+    CollectionBackend<
+        MetaplexCertifiedCollectionTransaction,
+        CertifiedCollectionAddresses,
+        UpdateCertifiedCollectionAddresses,
+        certified_collections::Model,
+    > for UncompressedRef<'a>
+{
     fn create(
         &self,
         txn: MetaplexCertifiedCollectionTransaction,
@@ -178,7 +188,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
         let payer: Pubkey = self.0.treasury_wallet_address;
         let rpc = &self.0.rpc_client;
         let mint = Keypair::new();
-        let MasterEdition {
+        let MetaplexMetadata {
             name,
             symbol,
             seller_fee_basis_points,
@@ -186,7 +196,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
             creators,
             supply,
             owner_address,
-        } = payload;
+        } = metadata;
         let owner: Pubkey = owner_address.parse()?;
 
         let (metadata, _) = Pubkey::find_program_address(
@@ -296,9 +306,86 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
             },
         })
     }
+
+    fn try_update(
+        &self,
+        collection: &certified_collections::Model,
+        txn: MetaplexCertifiedCollectionTransaction,
+    ) -> hub_core::prelude::Result<Option<TransactionResponse<UpdateCertifiedCollectionAddresses>>>
+    {
+        let rpc = &self.0.rpc_client;
+
+        let MetaplexCertifiedCollectionTransaction { metadata, .. } = txn;
+
+        let metadata = metadata.ok_or(SolanaError::MasterEditionMessageNotFound)?;
+
+        let MetaplexMetadata {
+            name,
+            seller_fee_basis_points,
+            symbol,
+            creators,
+            metadata_uri,
+            ..
+        } = metadata;
+
+        let payer: Pubkey = self.0.treasury_wallet_address;
+
+        let program_pubkey = mpl_token_metadata::id();
+        let update_authority: Pubkey = collection.update_authority.parse()?;
+        let metadata: Pubkey = collection.metadata.parse()?;
+
+        let ins = update_metadata_accounts_v2(
+            program_pubkey,
+            metadata,
+            update_authority,
+            None,
+            Some(DataV2 {
+                name,
+                symbol,
+                uri: metadata_uri,
+                seller_fee_basis_points: seller_fee_basis_points.try_into()?,
+                creators: Some(
+                    creators
+                        .into_iter()
+                        .map(TryInto::try_into)
+                        .collect::<Result<Vec<Creator>>>()?,
+                ),
+                collection: None,
+                uses: None,
+            }),
+            None,
+            None,
+        );
+
+        let blockhash = rpc.get_latest_blockhash()?;
+
+        let message =
+            solana_program::message::Message::new_with_blockhash(&[ins], Some(&payer), &blockhash);
+
+        let serialized_message = message.serialize();
+
+        Ok(Some(TransactionResponse {
+            serialized_message,
+            signatures_or_signers_public_keys: vec![
+                payer.to_string(),
+                update_authority.to_string(),
+            ],
+            addresses: UpdateCertifiedCollectionAddresses {
+                metadata,
+                update_authority,
+            },
+        }))
+    }
 }
 
-impl<'a> CollectionBackend for LegacyCollectionRef<'a> {
+impl<'a>
+    CollectionBackend<
+        MetaplexMasterEditionTransaction,
+        MasterEditionAddresses,
+        UpdateMasterEditionAddresses,
+        editions::Model,
+    > for EditionCollectionRef<'a>
+{
     fn create(
         &self,
         txn: MetaplexMasterEditionTransaction,
@@ -316,7 +403,7 @@ impl<'a> CollectionBackend for LegacyCollectionRef<'a> {
             creators,
             supply,
             owner_address,
-        } = payload;
+        } = master_edition;
         let owner: Pubkey = owner_address.parse()?;
 
         let (metadata, _) = Pubkey::find_program_address(
@@ -438,6 +525,75 @@ impl<'a> CollectionBackend for LegacyCollectionRef<'a> {
             },
         })
     }
+
+    fn try_update(
+        &self,
+        collection: &editions::Model,
+        txn: MetaplexMasterEditionTransaction,
+    ) -> hub_core::prelude::Result<Option<TransactionResponse<UpdateMasterEditionAddresses>>> {
+        let rpc = &self.0.rpc_client;
+
+        let MetaplexMasterEditionTransaction { master_edition, .. } = txn;
+
+        let master_edition = master_edition.ok_or(SolanaError::MasterEditionMessageNotFound)?;
+
+        let MasterEdition {
+            name,
+            seller_fee_basis_points,
+            symbol,
+            creators,
+            metadata_uri,
+            ..
+        } = master_edition;
+
+        let payer: Pubkey = self.0.treasury_wallet_address;
+
+        let program_pubkey = mpl_token_metadata::id();
+        let update_authority: Pubkey = master_edition.owner_address.parse()?;
+        let metadata: Pubkey = collection.metadata.parse()?;
+
+        let ins = update_metadata_accounts_v2(
+            program_pubkey,
+            metadata,
+            update_authority,
+            None,
+            Some(DataV2 {
+                name,
+                symbol,
+                uri: metadata_uri,
+                seller_fee_basis_points: seller_fee_basis_points.try_into()?,
+                creators: Some(
+                    creators
+                        .into_iter()
+                        .map(TryInto::try_into)
+                        .collect::<Result<Vec<Creator>>>()?,
+                ),
+                collection: None,
+                uses: None,
+            }),
+            None,
+            None,
+        );
+
+        let blockhash = rpc.get_latest_blockhash()?;
+
+        let message =
+            solana_program::message::Message::new_with_blockhash(&[ins], Some(&payer), &blockhash);
+
+        let serialized_message = message.serialize();
+
+        Ok(Some(TransactionResponse {
+            serialized_message,
+            signatures_or_signers_public_keys: vec![
+                payer.to_string(),
+                update_authority.to_string(),
+            ],
+            addresses: UpdateMasterEditionAddresses {
+                metadata,
+                update_authority,
+            },
+        }))
+    }
 }
 
 #[async_trait]
@@ -551,76 +707,6 @@ impl<'a> MintBackend for UncompressedRef<'a> {
                 recipient,
             },
         })
-    }
-
-    fn try_update(
-        &self,
-        collection_ty: CollectionType,
-        collection: &editions::Model,
-        txn: MetaplexMasterEditionTransaction,
-    ) -> hub_core::prelude::Result<Option<TransactionResponse<UpdateMasterEditionAddresses>>> {
-        let rpc = &self.0.rpc_client;
-
-        let MetaplexMasterEditionTransaction { master_edition, .. } = txn;
-
-        let master_edition = master_edition.ok_or(SolanaError::MasterEditionMessageNotFound)?;
-
-        let MasterEdition {
-            name,
-            seller_fee_basis_points,
-            symbol,
-            creators,
-            metadata_uri,
-            ..
-        } = master_edition;
-
-        let payer: Pubkey = self.0.treasury_wallet_address;
-
-        let program_pubkey = mpl_token_metadata::id();
-        let update_authority: Pubkey = master_edition.owner_address.parse()?;
-        let metadata: Pubkey = collection.metadata.parse()?;
-
-        let ins = update_metadata_accounts_v2(
-            program_pubkey,
-            metadata,
-            update_authority,
-            None,
-            Some(DataV2 {
-                name,
-                symbol,
-                uri: metadata_uri,
-                seller_fee_basis_points: seller_fee_basis_points.try_into()?,
-                creators: Some(
-                    creators
-                        .into_iter()
-                        .map(TryInto::try_into)
-                        .collect::<Result<Vec<Creator>>>()?,
-                ),
-                collection: None,
-                uses: None,
-            }),
-            None,
-            None,
-        );
-
-        let blockhash = rpc.get_latest_blockhash()?;
-
-        let message =
-            solana_program::message::Message::new_with_blockhash(&[ins], Some(&payer), &blockhash);
-
-        let serialized_message = message.serialize();
-
-        Ok(Some(TransactionResponse {
-            serialized_message,
-            signatures_or_signers_public_keys: vec![
-                payer.to_string(),
-                update_authority.to_string(),
-            ],
-            addresses: UpdateMasterEditionAddresses {
-                metadata,
-                update_authority,
-            },
-        }))
     }
 
     async fn transfer(
@@ -875,15 +961,6 @@ impl<'a> MintBackend for CompressedRef<'a> {
                 recipient,
             },
         })
-    }
-
-    fn try_update(
-        &self,
-        collection_ty: CollectionType,
-        collection: &editions::Model,
-        txn: MetaplexMasterEditionTransaction,
-    ) -> hub_core::prelude::Result<Option<TransactionResponse<UpdateMasterEditionAddresses>>> {
-        Ok(None)
     }
 
     async fn transfer(

@@ -227,7 +227,7 @@ impl Processor {
                         self.process_nft(
                             EventKind::CreateDrop,
                             &key,
-                            self.create_drop(&UncompressedRef(self.solana()), &key, payload),
+                            self.create_drop(&EditionCollectionRef(&self.solana), &key, payload),
                         )
                         .await
                     },
