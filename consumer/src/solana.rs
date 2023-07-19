@@ -162,9 +162,17 @@ impl Solana {
             message,
         };
 
-        let signature = self.rpc().send_and_confirm_transaction(&transaction)?;
+        let signature = self
+            .rpc()
+            .send_and_confirm_transaction(&transaction)
+            .map(|s| s.to_string())
+            .map_err(|e| {
+                let msg = format!("failed to submit transaction: {e}");
+                error!(msg);
+                anyhow!(msg)
+            })?;
 
-        Ok(signature.to_string())
+        Ok(signature)
     }
 
     /// Res
