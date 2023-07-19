@@ -1,7 +1,7 @@
 [[schemas]]
 subject = "nfts"
-version = 19
-sha512 = "94be29cc87e02f9622ba880302349b275262bc30546e6a6daacea541a6c1c740df9a185d0e18de782eda77ebf9c51c0e46c295d89abb9f7fb725b0ce9cfaf6f1"
+version = 20
+sha512 = "893f6ec5b59d8af3c0db48b3cdf461104447bf818114d4f379a5aca55235da6a4b32385f52995963c6e0f62b706360c32a17d1b94975d4098f438669e3d0a66d"
 
 [[schemas]]
 subject = "solana_nfts"

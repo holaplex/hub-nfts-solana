@@ -1,7 +1,7 @@
 use holaplex_hub_nfts_solana_entity::{collection_mints, collections};
 
 use holaplex_hub_nfts_solana_core::proto::{
-    MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction,
+    MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction, SolanaPendingTransaction,
     TransferMetaplexAssetTransaction,
 };
 use hub_core::prelude::*;
@@ -52,6 +52,21 @@ pub struct TransactionResponse<A> {
 
     /// Addresses that are related to the transaction.
     pub addresses: A,
+}
+
+impl<A> From<TransactionResponse<A>> for SolanaPendingTransaction {
+    fn from(
+        TransactionResponse {
+            serialized_message,
+            signatures_or_signers_public_keys,
+            ..
+        }: TransactionResponse<A>,
+    ) -> Self {
+        Self {
+            serialized_message,
+            signatures_or_signers_public_keys,
+        }
+    }
 }
 
 // TODO: include this in collections::Model

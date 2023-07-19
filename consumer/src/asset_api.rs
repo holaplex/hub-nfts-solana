@@ -82,7 +82,7 @@ pub struct AssetGrouping {
 pub struct AssetRoyalty {
     pub royalty_model: String,
     pub target: Option<serde_json::Number>, // TODO: what type is this
-    pub percent: serde_json::Number,        // TODO: this is fractional, use BCD to avoid rounding error
+    pub percent: serde_json::Number, // TODO: this is fractional, use BCD to avoid rounding error
     pub basis_points: u32,
     pub primary_sale_happened: bool,
     pub locked: bool,
