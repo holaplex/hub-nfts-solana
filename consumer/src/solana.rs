@@ -134,6 +134,10 @@ impl Solana {
         })
     }
 
+    pub fn asset_rpc(&self) -> jsonrpsee::http_client::HttpClient {
+        self.asset_rpc_client.clone()
+    }
+
     #[must_use]
     pub fn rpc(&self) -> Arc<RpcClient> {
         self.rpc_client.clone()
