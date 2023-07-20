@@ -1,13 +1,15 @@
 use anchor_lang::{prelude::AccountMeta, InstructionData};
 use holaplex_hub_nfts_solana_core::proto::{
-    treasury_events::SolanaTransactionResult, MasterEdition,
-    MetaplexCertifiedCollectionTransaction, MetaplexMasterEditionTransaction, MetaplexMetadata,
-    MintMetaplexEditionTransaction, TransferMetaplexAssetTransaction,
+    treasury_events::SolanaTransactionResult, MasterEdition, MetaplexMasterEditionTransaction,
+    MetaplexMetadata, MintMetaplexEditionTransaction, MintMetaplexMetadataTransaction,
+    TransferMetaplexAssetTransaction,
 };
-use holaplex_hub_nfts_solana_entity::{certified_collections, collection_mints, editions};
+use holaplex_hub_nfts_solana_entity::{collection_mints, collections};
 use hub_core::{anyhow::Result, clap, prelude::*, thiserror::Error, uuid::Uuid};
+use mpl_bubblegum::state::metaplex_adapter::{
+    Collection, Creator as BubblegumCreator, TokenProgramVersion,
+};
 use mpl_token_metadata::{
-    assertions::metadata,
     instruction::{mint_new_edition_from_master_edition_via_token, update_metadata_accounts_v2},
     state::{Creator, DataV2, EDITION, PREFIX},
 };
@@ -32,11 +34,10 @@ use spl_token::{
 use crate::{
     asset_api::RpcClient as _,
     backend::{
-        CertifiedCollectionAddresses, CollectionBackend, CollectionType, MasterEditionAddresses,
-        MintBackend, MintEditionAddresses, TransactionResponse, TransferAssetAddresses,
-        UpdateCertifiedCollectionAddresses, UpdateMasterEditionAddresses,
+        CollectionBackend, MasterEditionAddresses, MintBackend, MintCompressedMintV1Addresses,
+        MintEditionAddresses, TransactionResponse, TransferAssetAddresses, TransferBackend,
+        UpdateMasterEditionAddresses,
     },
-    events::ProcessorError,
 };
 
 const TOKEN_PROGRAM_PUBKEY: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
@@ -86,11 +87,13 @@ pub struct TransferAssetRequest {
 }
 
 #[derive(Debug, Error)]
-enum SolanaError {
+enum SolanaErrorNotFoundMessage {
     #[error("master edition message not found")]
-    MasterEditionMessageNotFound,
+    MasterEdition,
     #[error("serialized message message not found")]
-    SerializedMessageNotFound,
+    Serialized,
+    #[error("metadata message not found")]
+    Metadata,
 }
 
 #[derive(Clone)]
@@ -99,6 +102,7 @@ pub struct Solana {
     treasury_wallet_address: Pubkey,
     bubblegum_tree_authority: Pubkey,
     bubblegum_merkle_tree: Pubkey,
+    bubblegum_cpi_address: Pubkey,
     asset_rpc_client: jsonrpsee::http_client::HttpClient,
 }
 
@@ -113,14 +117,19 @@ impl Solana {
         } = args;
         let rpc_client = Arc::new(RpcClient::new(solana_endpoint));
 
+        let (bubblegum_cpi_address, _) = Pubkey::find_program_address(
+            &[mpl_bubblegum::state::COLLECTION_CPI_PREFIX.as_bytes()],
+            &mpl_bubblegum::ID,
+        );
+
         Ok(Self {
             rpc_client,
             treasury_wallet_address: solana_treasury_wallet_address,
             bubblegum_tree_authority: tree_authority,
             bubblegum_merkle_tree: merkle_tree,
+            bubblegum_cpi_address,
             asset_rpc_client: jsonrpsee::http_client::HttpClientBuilder::default()
                 .request_timeout(std::time::Duration::from_secs(5))
-                // .set_headers(...) // TODO: add auth here?
                 .build(digital_asset_api_endpoint)
                 .context("Failed to initialize asset API client")?,
         })
@@ -149,7 +158,7 @@ impl Solana {
             &transaction
                 .serialized_message
                 .clone()
-                .ok_or(SolanaError::SerializedMessageNotFound)?,
+                .ok_or(SolanaErrorNotFoundMessage::Serialized)?,
         )?;
 
         let transaction = Transaction {
@@ -168,230 +177,15 @@ pub struct UncompressedRef<'a>(pub &'a Solana);
 #[repr(transparent)]
 pub struct CompressedRef<'a>(pub &'a Solana);
 #[repr(transparent)]
-pub struct EditionCollectionRef<'a>(pub &'a Solana);
+pub struct EditionRef<'a>(pub &'a Solana);
 
-impl<'a>
-    CollectionBackend<
-        MetaplexCertifiedCollectionTransaction,
-        CertifiedCollectionAddresses,
-        UpdateCertifiedCollectionAddresses,
-        certified_collections::Model,
-    > for UncompressedRef<'a>
-{
-    fn create(
-        &self,
-        txn: MetaplexCertifiedCollectionTransaction,
-    ) -> hub_core::prelude::Result<TransactionResponse<CertifiedCollectionAddresses>> {
-        let MetaplexCertifiedCollectionTransaction { metadata } = txn;
-        let metadata = metadata.ok_or(ProcessorError::MessageNotFound)?;
-
-        let payer: Pubkey = self.0.treasury_wallet_address;
-        let rpc = &self.0.rpc_client;
-        let mint = Keypair::new();
-        let MetaplexMetadata {
-            name,
-            symbol,
-            seller_fee_basis_points,
-            metadata_uri,
-            creators,
-            supply,
-            owner_address,
-        } = metadata;
-        let owner: Pubkey = owner_address.parse()?;
-
-        let (metadata, _) = Pubkey::find_program_address(
-            &[
-                b"metadata",
-                mpl_token_metadata::ID.as_ref(),
-                mint.pubkey().as_ref(),
-            ],
-            &mpl_token_metadata::ID,
-        );
-        let associated_token_account = get_associated_token_address(&owner, &mint.pubkey());
-        let (master_edition, _) = Pubkey::find_program_address(
-            &[
-                b"metadata",
-                mpl_token_metadata::ID.as_ref(),
-                mint.pubkey().as_ref(),
-                b"edition",
-            ],
-            &mpl_token_metadata::ID,
-        );
-        let len = spl_token::state::Mint::LEN;
-        let rent = rpc.get_minimum_balance_for_rent_exemption(len)?;
-        let blockhash = rpc.get_latest_blockhash()?;
-
-        let create_account_ins = solana_program::system_instruction::create_account(
-            &payer,
-            &mint.pubkey(),
-            rent,
-            len.try_into()?,
-            &spl_token::ID,
-        );
-        let initialize_mint_ins = spl_token::instruction::initialize_mint(
-            &spl_token::ID,
-            &mint.pubkey(),
-            &owner,
-            Some(&owner),
-            0,
-        )?;
-        let ata_ins = spl_associated_token_account::instruction::create_associated_token_account(
-            &payer,
-            &owner,
-            &mint.pubkey(),
-            &spl_token::ID,
-        );
-        let min_to_ins = spl_token::instruction::mint_to(
-            &spl_token::ID,
-            &mint.pubkey(),
-            &associated_token_account,
-            &owner,
-            &[],
-            1,
-        )?;
-        let create_metadata_account_ins =
-            mpl_token_metadata::instruction::create_metadata_accounts_v3(
-                mpl_token_metadata::ID,
-                metadata,
-                mint.pubkey(),
-                owner,
-                payer,
-                owner,
-                name,
-                symbol,
-                metadata_uri,
-                Some(
-                    creators
-                        .into_iter()
-                        .map(TryInto::try_into)
-                        .collect::<Result<Vec<Creator>, _>>()?,
-                ),
-                seller_fee_basis_points.try_into()?,
-                true,
-                true,
-                None,
-                None,
-                None,
-            );
-        let instructions = vec![
-            create_account_ins,
-            initialize_mint_ins,
-            ata_ins,
-            min_to_ins,
-            create_metadata_account_ins,
-        ];
-
-        let message = solana_program::message::Message::new_with_blockhash(
-            &instructions,
-            Some(&payer),
-            &blockhash,
-        );
-
-        let serialized_message = message.serialize();
-        let mint_signature = mint.try_sign_message(&message.serialize())?;
-
-        Ok(TransactionResponse {
-            serialized_message,
-            signatures_or_signers_public_keys: vec![
-                payer.to_string(),
-                mint_signature.to_string(),
-                owner.to_string(),
-            ],
-            addresses: CertifiedCollectionAddresses {
-                update_authority: owner,
-                associated_token_account,
-                mint: mint.pubkey(),
-                owner,
-                metadata,
-            },
-        })
-    }
-
-    fn try_update(
-        &self,
-        collection: &certified_collections::Model,
-        txn: MetaplexCertifiedCollectionTransaction,
-    ) -> hub_core::prelude::Result<Option<TransactionResponse<UpdateCertifiedCollectionAddresses>>>
-    {
-        let rpc = &self.0.rpc_client;
-
-        let MetaplexCertifiedCollectionTransaction { metadata, .. } = txn;
-
-        let metadata = metadata.ok_or(SolanaError::MasterEditionMessageNotFound)?;
-
-        let MetaplexMetadata {
-            name,
-            seller_fee_basis_points,
-            symbol,
-            creators,
-            metadata_uri,
-            ..
-        } = metadata;
-
-        let payer: Pubkey = self.0.treasury_wallet_address;
-
-        let program_pubkey = mpl_token_metadata::id();
-        let update_authority: Pubkey = collection.update_authority.parse()?;
-        let metadata: Pubkey = collection.metadata.parse()?;
-
-        let ins = update_metadata_accounts_v2(
-            program_pubkey,
-            metadata,
-            update_authority,
-            None,
-            Some(DataV2 {
-                name,
-                symbol,
-                uri: metadata_uri,
-                seller_fee_basis_points: seller_fee_basis_points.try_into()?,
-                creators: Some(
-                    creators
-                        .into_iter()
-                        .map(TryInto::try_into)
-                        .collect::<Result<Vec<Creator>>>()?,
-                ),
-                collection: None,
-                uses: None,
-            }),
-            None,
-            None,
-        );
-
-        let blockhash = rpc.get_latest_blockhash()?;
-
-        let message =
-            solana_program::message::Message::new_with_blockhash(&[ins], Some(&payer), &blockhash);
-
-        let serialized_message = message.serialize();
-
-        Ok(Some(TransactionResponse {
-            serialized_message,
-            signatures_or_signers_public_keys: vec![
-                payer.to_string(),
-                update_authority.to_string(),
-            ],
-            addresses: UpdateCertifiedCollectionAddresses {
-                metadata,
-                update_authority,
-            },
-        }))
-    }
-}
-
-impl<'a>
-    CollectionBackend<
-        MetaplexMasterEditionTransaction,
-        MasterEditionAddresses,
-        UpdateMasterEditionAddresses,
-        editions::Model,
-    > for EditionCollectionRef<'a>
-{
+impl<'a> CollectionBackend for UncompressedRef<'a> {
     fn create(
         &self,
         txn: MetaplexMasterEditionTransaction,
     ) -> hub_core::prelude::Result<TransactionResponse<MasterEditionAddresses>> {
         let MetaplexMasterEditionTransaction { master_edition, .. } = txn;
-        let master_edition = master_edition.ok_or(SolanaError::MasterEditionMessageNotFound)?;
+        let master_edition = master_edition.ok_or(SolanaErrorNotFoundMessage::MasterEdition)?;
         let payer: Pubkey = self.0.treasury_wallet_address;
         let rpc = &self.0.rpc_client;
         let mint = Keypair::new();
@@ -526,16 +320,16 @@ impl<'a>
         })
     }
 
-    fn try_update(
+    fn update(
         &self,
-        collection: &editions::Model,
+        collection: &collections::Model,
         txn: MetaplexMasterEditionTransaction,
-    ) -> hub_core::prelude::Result<Option<TransactionResponse<UpdateMasterEditionAddresses>>> {
+    ) -> hub_core::prelude::Result<TransactionResponse<UpdateMasterEditionAddresses>> {
         let rpc = &self.0.rpc_client;
 
         let MetaplexMasterEditionTransaction { master_edition, .. } = txn;
 
-        let master_edition = master_edition.ok_or(SolanaError::MasterEditionMessageNotFound)?;
+        let master_edition = master_edition.ok_or(SolanaErrorNotFoundMessage::MasterEdition)?;
 
         let MasterEdition {
             name,
@@ -582,7 +376,7 @@ impl<'a>
 
         let serialized_message = message.serialize();
 
-        Ok(Some(TransactionResponse {
+        Ok(TransactionResponse {
             serialized_message,
             signatures_or_signers_public_keys: vec![
                 payer.to_string(),
@@ -592,16 +386,14 @@ impl<'a>
                 metadata,
                 update_authority,
             },
-        }))
+        })
     }
 }
 
-#[async_trait]
-impl<'a> MintBackend for UncompressedRef<'a> {
+impl<'a> MintBackend<MintMetaplexEditionTransaction, MintEditionAddresses> for EditionRef<'a> {
     fn mint(
         &self,
-        collection_ty: CollectionType,
-        collection: &editions::Model,
+        collection: &collections::Model,
         txn: MintMetaplexEditionTransaction,
     ) -> hub_core::prelude::Result<TransactionResponse<MintEditionAddresses>> {
         let rpc = &self.0.rpc_client;
@@ -708,10 +500,12 @@ impl<'a> MintBackend for UncompressedRef<'a> {
             },
         })
     }
+}
 
+#[async_trait]
+impl<'a> TransferBackend for UncompressedRef<'a> {
     async fn transfer(
         &self,
-        collection_ty: CollectionType,
         collection_mint: &collection_mints::Model,
         txn: TransferMetaplexAssetTransaction,
     ) -> hub_core::prelude::Result<TransactionResponse<TransferAssetAddresses>> {
@@ -773,199 +567,9 @@ impl<'a> MintBackend for UncompressedRef<'a> {
 }
 
 #[async_trait]
-impl<'a> MintBackend for CompressedRef<'a> {
-    // fn create(
-    //     &self,
-    //     evt: MetaplexMasterEditionTransaction,
-    // ) -> Result<TransactionResponse<MasterEditionAddresses>> {
-    //     let MetaplexMasterEditionTransaction { master_edition, .. } = evt;
-    //     let MasterEdition {
-    //         name,
-    //         symbol,
-    //         metadata_uri,
-    //         creators,
-    //         seller_fee_basis_points,
-    //         supply, // TODO: ?
-    //         owner_address,
-    //     } = master_edition.context("Missing master edition message")?;
-    //     let payer = self.treasury;
-    //     let owner = owner_address.parse()?;
-    //     let mint = Keypair::new();
-
-    //     let (metadata, _) = Pubkey::find_program_address(
-    //         &[
-    //             b"metadata",
-    //             mpl_token_metadata::ID.as_ref(),
-    //             mint.pubkey().as_ref(),
-    //         ],
-    //         &mpl_token_metadata::ID,
-    //     );
-    //     let associated_token_account = get_associated_token_address(&owner, &mint.pubkey());
-
-    //     let mint_len = spl_token::state::Mint::LEN;
-
-    //     // TODO: this is the collection NFT, right?
-    //     let instructions = [
-    //         solana_program::system_instruction::create_account(
-    //             &payer,
-    //             &mint.pubkey(),
-    //             self.rpc.get_minimum_balance_for_rent_exemption(mint_len)?,
-    //             mint_len.try_into()?,
-    //             &spl_token::ID,
-    //         ),
-    //         spl_token::instruction::initialize_mint(
-    //             &spl_token::ID,
-    //             &mint.pubkey(),
-    //             &owner,
-    //             Some(&owner),
-    //             0,
-    //         )?,
-    //         spl_associated_token_account::instruction::create_associated_token_account(
-    //             &payer,
-    //             &owner,
-    //             &mint.pubkey(),
-    //             &spl_token::ID,
-    //         ),
-    //         spl_token::instruction::mint_to(
-    //             &spl_token::ID,
-    //             &mint.pubkey(),
-    //             &associated_token_account,
-    //             &owner,
-    //             &[],
-    //             1,
-    //         )?,
-    //         mpl_token_metadata::instruction::create_metadata_accounts_v3(
-    //             mpl_token_metadata::ID,
-    //             metadata,
-    //             mint.pubkey(),
-    //             owner,
-    //             payer,
-    //             owner,
-    //             name,
-    //             symbol,
-    //             metadata_uri,
-    //             Some(
-    //                 creators
-    //                     .into_iter()
-    //                     .map(TryInto::try_into)
-    //                     .collect::<Result<Vec<Creator>, _>>()?,
-    //             ),
-    //             seller_fee_basis_points.try_into()?,
-    //             true,
-    //             true,
-    //             None,
-    //             None,
-    //             None,
-    //         ),
-    //     ];
-
-    //     let serialized_message = solana_program::message::Message::new_with_blockhash(
-    //         &instructions,
-    //         Some(&payer),
-    //         &self.rpc.get_latest_blockhash()?,
-    //     )
-    //     .serialize();
-    //     let mint_signature = mint.try_sign_message(&serialized_message)?;
-
-    //     Ok(TransactionResponse {
-    //         serialized_message,
-    //         signatures_or_signers_public_keys: vec![
-    //             payer.to_string(),
-    //             mint_signature.to_string(),
-    //             owner.to_string(),
-    //         ],
-    //         addresses: MasterEditionAddresses {
-    //             metadata,
-    //             associated_token_account,
-    //             owner,
-    //             master_edition: todo!("what"),
-    //             mint: mint.pubkey(),
-    //             update_authority: owner,
-    //         },
-    //     })
-    // }
-
-    fn mint(
-        &self,
-        collection_ty: CollectionType,
-        collection: &editions::Model,
-        txn: MintMetaplexEditionTransaction,
-    ) -> hub_core::prelude::Result<TransactionResponse<MintEditionAddresses>> {
-        match collection_ty {
-            CollectionType::Legacy => {
-                bail!("Legacy collections are not supported with compressed NFTs.")
-            },
-            CollectionType::Verified => (),
-        }
-
-        let MintMetaplexEditionTransaction {
-            recipient_address,
-            owner_address,
-            edition,
-            ..
-        } = txn;
-        let payer = self.0.treasury_wallet_address;
-        let recipient = recipient_address.parse()?;
-        let owner = owner_address.parse()?;
-
-        let instructions = [Instruction {
-            program_id: mpl_bubblegum::ID,
-            accounts: [
-                AccountMeta::new(self.0.bubblegum_tree_authority, false),
-                AccountMeta::new_readonly(recipient, false),
-                AccountMeta::new_readonly(recipient, false),
-                AccountMeta::new(self.0.bubblegum_merkle_tree, false),
-                AccountMeta::new_readonly(payer, true),
-                AccountMeta::new_readonly(owner, true), // TODO: who will own the trees??
-                AccountMeta::new_readonly(spl_noop::ID, false),
-                AccountMeta::new_readonly(spl_account_compression::ID, false),
-                AccountMeta::new_readonly(system_program::ID, false),
-            ]
-            .into_iter()
-            .collect(),
-            data: mpl_bubblegum::instruction::MintV1 {
-                message: mpl_bubblegum::state::metaplex_adapter::MetadataArgs {
-                    name: todo!(),
-                    symbol: todo!(),
-                    uri: todo!(),
-                    seller_fee_basis_points: todo!(),
-                    primary_sale_happened: todo!(),
-                    is_mutable: todo!(),
-                    edition_nonce: todo!(),
-                    token_standard: todo!(),
-                    collection: todo!(),
-                    uses: todo!(),
-                    token_program_version: todo!(),
-                    creators: todo!(),
-                },
-            }
-            .data(),
-        }];
-
-        let serialized_message = solana_program::message::Message::new_with_blockhash(
-            &instructions,
-            Some(&payer),
-            &self.0.rpc_client.get_latest_blockhash()?,
-        )
-        .serialize();
-
-        Ok(TransactionResponse {
-            serialized_message,
-            signatures_or_signers_public_keys: vec![payer.to_string(), owner.to_string()],
-            addresses: MintEditionAddresses {
-                edition: todo!("what"),
-                mint: todo!("what"),
-                metadata: todo!("what"),
-                owner,
-                associated_token_account: todo!("what"),
-                recipient,
-            },
-        })
-    }
-
+impl<'a> TransferBackend for CompressedRef<'a> {
     async fn transfer(
         &self,
-        collection_ty: CollectionType,
         collection_mint: &collection_mints::Model,
         txn: TransferMetaplexAssetTransaction,
     ) -> hub_core::prelude::Result<TransactionResponse<TransferAssetAddresses>> {
@@ -1027,6 +631,109 @@ impl<'a> MintBackend for CompressedRef<'a> {
                 recipient_associated_token_account: todo!("what"),
                 owner_associated_token_account: todo!("what"),
             },
+        })
+    }
+}
+
+impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintCompressedMintV1Addresses>
+    for CompressedRef<'a>
+{
+    fn mint(
+        &self,
+        collection: &collections::Model,
+        txn: MintMetaplexMetadataTransaction,
+    ) -> hub_core::prelude::Result<TransactionResponse<MintCompressedMintV1Addresses>> {
+        let MintMetaplexMetadataTransaction {
+            recipient_address,
+            metadata,
+            ..
+        } = txn;
+
+        let MetaplexMetadata {
+            name,
+            seller_fee_basis_points,
+            symbol,
+            creators,
+            metadata_uri,
+            owner_address,
+        } = metadata.ok_or(SolanaErrorNotFoundMessage::Metadata)?;
+        let payer = self.0.treasury_wallet_address;
+        let recipient = recipient_address.parse()?;
+        let owner = owner_address.parse()?;
+        let treasury_wallet_address = self.0.treasury_wallet_address;
+
+        // TODO: look into creator verification
+        let instructions = [Instruction {
+            program_id: mpl_bubblegum::ID,
+            accounts: [
+                // Tree authority
+                AccountMeta::new(self.0.bubblegum_tree_authority, false),
+                // TODO: can we make the project treasury the leaf owner while keeping the tree authority the holaplex treasury wallet
+                // Leaf owner
+                AccountMeta::new_readonly(treasury_wallet_address, false),
+                // Leaf delegate
+                AccountMeta::new_readonly(treasury_wallet_address, false),
+                // Merkle tree
+                AccountMeta::new(self.0.bubblegum_merkle_tree, false),
+                // Payer [signer]
+                AccountMeta::new_readonly(payer, true),
+                // Tree delegate [signer]
+                AccountMeta::new_readonly(treasury_wallet_address, true),
+                // Collection authority [signer]
+                AccountMeta::new_readonly(owner, true),
+                // Collection authority pda
+                AccountMeta::new_readonly(mpl_bubblegum::ID, false),
+                // Collection mint
+                AccountMeta::new_readonly(collection.mint.parse()?, false),
+                // collection metadata [mutable]
+                AccountMeta::new(collection.metadata.parse()?, false),
+                // Edition account
+                AccountMeta::new_readonly(collection.master_edition.parse()?, false),
+                // Bubblegum Signer
+                AccountMeta::new_readonly(self.0.bubblegum_cpi_address, false),
+                AccountMeta::new_readonly(spl_noop::ID, false),
+                AccountMeta::new_readonly(spl_account_compression::ID, false),
+                AccountMeta::new_readonly(mpl_token_metadata::ID, false),
+                AccountMeta::new_readonly(system_program::ID, false),
+            ]
+            .into_iter()
+            .collect(),
+            data: mpl_bubblegum::instruction::MintToCollectionV1 {
+                metadata_args: mpl_bubblegum::state::metaplex_adapter::MetadataArgs {
+                    name,
+                    symbol,
+                    uri: metadata_uri,
+                    seller_fee_basis_points: seller_fee_basis_points.try_into()?,
+                    primary_sale_happened: false,
+                    is_mutable: true,
+                    edition_nonce: None,
+                    token_standard: None,
+                    collection: Some(Collection {
+                        verified: true,
+                        key: collection.mint.parse()?,
+                    }),
+                    uses: None,
+                    token_program_version: TokenProgramVersion::Original,
+                    creators: creators
+                        .into_iter()
+                        .map(TryInto::try_into)
+                        .collect::<Result<Vec<BubblegumCreator>>>()?,
+                },
+            }
+            .data(),
+        }];
+
+        let serialized_message = solana_program::message::Message::new_with_blockhash(
+            &instructions,
+            Some(&payer),
+            &self.0.rpc_client.get_latest_blockhash()?,
+        )
+        .serialize();
+
+        Ok(TransactionResponse {
+            serialized_message,
+            signatures_or_signers_public_keys: vec![payer.to_string(), owner.to_string()],
+            addresses: MintCompressedMintV1Addresses { owner, recipient },
         })
     }
 }

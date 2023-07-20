@@ -2,14 +2,12 @@
 #![warn(clippy::pedantic, clippy::cargo)]
 #![allow(clippy::module_name_repetitions)]
 
-mod certified_collections;
 mod collection_mints;
+mod collections;
 pub mod db;
-mod editions;
 
-pub use certified_collections::CertifiedCollection;
 pub use collection_mints::CollectionMint;
-pub use editions::Edition;
+pub use collections::Collection;
 use hub_core::{consumer::RecvError, prelude::*};
 use proto::{NftEventKey, SolanaNftEventKey, TreasuryEventKey};
 pub use sea_orm;
@@ -95,6 +93,26 @@ use mpl_token_metadata::state::Creator;
 use crate::proto::Creator as ProtoCreator;
 
 impl TryFrom<ProtoCreator> for Creator {
+    type Error = Error;
+
+    fn try_from(
+        ProtoCreator {
+            address,
+            verified,
+            share,
+        }: ProtoCreator,
+    ) -> Result<Self> {
+        Ok(Self {
+            address: address.parse()?,
+            verified,
+            share: share.try_into()?,
+        })
+    }
+}
+
+use mpl_bubblegum::state::metaplex_adapter::Creator as BubblegumCreator;
+
+impl TryFrom<ProtoCreator> for BubblegumCreator {
     type Error = Error;
 
     fn try_from(

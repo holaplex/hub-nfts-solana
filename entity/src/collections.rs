@@ -3,16 +3,18 @@
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Default)]
-#[sea_orm(table_name = "certified_collections")]
+#[sea_orm(table_name = "collections")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
+    pub master_edition: String,
     pub update_authority: String,
     pub associated_token_account: String,
     pub owner: String,
     pub mint: String,
     pub metadata: String,
     pub created_at: DateTime,
+    // TODO: add supply column to help denote mcc from editions
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
