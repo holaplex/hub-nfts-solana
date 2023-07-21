@@ -662,42 +662,49 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintCompressedMintV1Addres
         let owner = owner_address.parse()?;
         let treasury_wallet_address = self.0.treasury_wallet_address;
 
-        // TODO: look into creator verification
+        let mut accounts = vec![
+            // Tree authority
+            AccountMeta::new(self.0.bubblegum_tree_authority, false),
+            // TODO: can we make the project treasury the leaf owner while keeping the tree authority the holaplex treasury wallet
+            // Leaf owner
+            AccountMeta::new_readonly(recipient, false),
+            // Leaf delegate
+            AccountMeta::new_readonly(recipient, false),
+            // Merkle tree
+            AccountMeta::new(self.0.bubblegum_merkle_tree, false),
+            // Payer [signer]
+            AccountMeta::new_readonly(payer, true),
+            // Tree delegate [signer]
+            AccountMeta::new_readonly(treasury_wallet_address, true),
+            // Collection authority [signer]
+            AccountMeta::new_readonly(owner, true),
+            // Collection authority pda
+            AccountMeta::new_readonly(mpl_bubblegum::ID, false),
+            // Collection mint
+            AccountMeta::new_readonly(collection.mint.parse()?, false),
+            // collection metadata [mutable]
+            AccountMeta::new(collection.metadata.parse()?, false),
+            // Edition account
+            AccountMeta::new_readonly(collection.master_edition.parse()?, false),
+            // Bubblegum Signer
+            AccountMeta::new_readonly(self.0.bubblegum_cpi_address, false),
+            AccountMeta::new_readonly(spl_noop::ID, false),
+            AccountMeta::new_readonly(spl_account_compression::ID, false),
+            AccountMeta::new_readonly(mpl_token_metadata::ID, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ];
+
+        if creators
+            .iter()
+            .find(|&creator| creator.verified && creator.address == owner.to_string())
+            .is_some()
+        {
+            accounts.push(AccountMeta::new_readonly(owner, true));
+        }
+
         let instructions = [Instruction {
             program_id: mpl_bubblegum::ID,
-            accounts: [
-                // Tree authority
-                AccountMeta::new(self.0.bubblegum_tree_authority, false),
-                // TODO: can we make the project treasury the leaf owner while keeping the tree authority the holaplex treasury wallet
-                // Leaf owner
-                AccountMeta::new_readonly(treasury_wallet_address, false),
-                // Leaf delegate
-                AccountMeta::new_readonly(treasury_wallet_address, false),
-                // Merkle tree
-                AccountMeta::new(self.0.bubblegum_merkle_tree, false),
-                // Payer [signer]
-                AccountMeta::new_readonly(payer, true),
-                // Tree delegate [signer]
-                AccountMeta::new_readonly(treasury_wallet_address, true),
-                // Collection authority [signer]
-                AccountMeta::new_readonly(owner, true),
-                // Collection authority pda
-                AccountMeta::new_readonly(mpl_bubblegum::ID, false),
-                // Collection mint
-                AccountMeta::new_readonly(collection.mint.parse()?, false),
-                // collection metadata [mutable]
-                AccountMeta::new(collection.metadata.parse()?, false),
-                // Edition account
-                AccountMeta::new_readonly(collection.master_edition.parse()?, false),
-                // Bubblegum Signer
-                AccountMeta::new_readonly(self.0.bubblegum_cpi_address, false),
-                AccountMeta::new_readonly(spl_noop::ID, false),
-                AccountMeta::new_readonly(spl_account_compression::ID, false),
-                AccountMeta::new_readonly(mpl_token_metadata::ID, false),
-                AccountMeta::new_readonly(system_program::ID, false),
-            ]
-            .into_iter()
-            .collect(),
+            accounts: accounts.into_iter().collect(),
             data: mpl_bubblegum::instruction::MintToCollectionV1 {
                 metadata_args: mpl_bubblegum::state::metaplex_adapter::MetadataArgs {
                     name,
