@@ -36,6 +36,8 @@ use crate::{
     solana::{CompressedRef, EditionRef, Solana, UncompressedRef},
 };
 
+const MAX_LIMIT: u64 = 1000;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ProcessorErrorKind {
     #[error("Associated record not found in database")]
@@ -878,16 +880,22 @@ impl Processor {
         let db = &self.db;
         let producer = &self.producer;
         let mut page = 1;
-        const MAX_LIMIT: u64 = 1000;
 
         let collection = rpc
             .get_asset(&mint_address)
             .await
             .map_err(ProcessorErrorKind::AssetApi)?;
 
-        info!("Importing collection: {:?}", collection.id);
+        info!("Importing collection: {:?}", collection.id.to_string());
 
-        let collection_model = index_collection(key.clone(), collection, db, producer).await?;
+        let collection_model = index_collection(
+            project_id.clone(),
+            user_id.clone(),
+            collection,
+            db,
+            producer,
+        )
+        .await?;
 
         loop {
             let result = rpc
@@ -896,10 +904,20 @@ impl Processor {
                 .map_err(ProcessorErrorKind::AssetApi)?;
 
             let mut mints = Vec::new();
+
             for asset in result.items {
-                info!("Importing mint: {:?}", asset.id);
+                let project_id = project_id.clone();
+                let user_id = user_id.clone();
+
+                // Check whether NFT is burned
+                if asset.ownership.owner.0.is_empty() {
+                    continue;
+                }
+
+                info!("Importing mint: {:?}", asset.id.to_string());
                 let am = emit_index_collection_mint_event(
-                    key.clone(),
+                    project_id,
+                    user_id,
                     collection_model.id,
                     asset,
                     producer.clone(),
@@ -924,7 +942,8 @@ impl Processor {
 }
 
 async fn index_collection(
-    key: SolanaNftEventKey,
+    project_id: String,
+    user_id: String,
     collection: Asset,
     db: &db::Connection,
     producer: &Producer<SolanaNftEvents>,
@@ -933,17 +952,16 @@ async fn index_collection(
     let mint = collection.id.into();
     let seller_fee_basis_points = collection.royalty.basis_points;
     let metadata = collection.content.metadata;
-    let files = collection
+    let files: Vec<File> = collection
         .content
         .files
         .map(|fs| fs.iter().map(Into::into).collect())
         .unwrap_or_default();
 
-    let image = collection
-        .content
-        .links
-        .and_then(|links| links.get("image").map(ToOwned::to_owned))
-        .flatten()
+    let image = files
+        .iter()
+        .find(|f| f.mime.clone().unwrap().contains("image"))
+        .map(|f| f.uri.clone())
         .unwrap_or_default();
 
     let attributes = metadata
@@ -1005,7 +1023,11 @@ async fn index_collection(
                     },
                 )),
             }),
-            Some(&key),
+            Some(&SolanaNftEventKey {
+                id: collection_model.id.to_string(),
+                project_id,
+                user_id,
+            }),
         )
         .await
         .map_err(ProcessorErrorKind::SendError)?;
@@ -1014,14 +1036,14 @@ async fn index_collection(
 }
 
 async fn emit_index_collection_mint_event(
-    key: SolanaNftEventKey,
+    project_id: String,
+    user_id: String,
     collection: Uuid,
     asset: Asset,
     producer: Producer<SolanaNftEvents>,
 ) -> ProcessResult<collection_mints::ActiveModel> {
-    let key = key.clone();
-    let producer = producer.clone();
     let owner = asset.ownership.owner.into();
+
     let mint = asset.id.into();
     let ata = get_associated_token_address(&owner, &mint);
     let seller_fee_basis_points = asset.royalty.basis_points;
@@ -1039,11 +1061,17 @@ async fn emit_index_collection_mint_event(
         .map(|fs| fs.iter().map(Into::into).collect::<Vec<File>>())
         .unwrap_or_default();
 
-    let image = asset
-        .content
-        .links
-        .and_then(|links| links.get("image").map(ToOwned::to_owned))
-        .flatten()
+    let image = files
+        .iter()
+        .find_map(|f| {
+            f.mime.as_ref().and_then(|mime| {
+                if mime.contains("image") {
+                    Some(f.uri.clone())
+                } else {
+                    None
+                }
+            })
+        })
         .unwrap_or_default();
 
     let attributes = metadata
@@ -1061,7 +1089,9 @@ async fn emit_index_collection_mint_event(
         })
         .collect::<Vec<_>>();
 
+    let uuid = Uuid::from_u64_pair(Utc::now().timestamp_nanos() as u64, rand::random::<u64>());
     let am = collection_mints::ActiveModel {
+        id: Set(uuid),
         collection_id: Set(collection),
         mint: Set(mint.to_string()),
         owner: Set(owner.to_string()),
@@ -1092,7 +1122,11 @@ async fn emit_index_collection_mint_event(
                         update_authority: update_authority.to_string(),
                     })),
                 }),
-                Some(&key),
+                Some(&SolanaNftEventKey {
+                    id: uuid.to_string(),
+                    user_id,
+                    project_id,
+                }),
             )
             .await
             .map_err(ProcessorErrorKind::SendError)
