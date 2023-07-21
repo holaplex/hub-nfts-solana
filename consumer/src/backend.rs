@@ -1,9 +1,7 @@
-use holaplex_hub_nfts_solana_entity::{collection_mints, collections};
-
 use holaplex_hub_nfts_solana_core::proto::{
-    MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction, SolanaPendingTransaction,
-    TransferMetaplexAssetTransaction,
+    MetaplexMasterEditionTransaction, SolanaPendingTransaction, TransferMetaplexAssetTransaction,
 };
+use holaplex_hub_nfts_solana_entity::{collection_mints, collections};
 use hub_core::prelude::*;
 use solana_program::pubkey::Pubkey;
 
@@ -24,6 +22,12 @@ pub struct MintEditionAddresses {
     pub metadata: Pubkey,
     pub owner: Pubkey,
     pub associated_token_account: Pubkey,
+    pub recipient: Pubkey,
+}
+
+#[derive(Clone)]
+pub struct MintCompressedMintV1Addresses {
+    pub owner: Pubkey,
     pub recipient: Pubkey,
 }
 
@@ -69,44 +73,27 @@ impl<A> From<TransactionResponse<A>> for SolanaPendingTransaction {
     }
 }
 
-// TODO: include this in collections::Model
-pub enum CollectionType {
-    Legacy,
-    Verified,
-}
-
-// Legacy, Verified
-#[async_trait]
 pub trait CollectionBackend {
     fn create(
         &self,
         txn: MetaplexMasterEditionTransaction,
     ) -> Result<TransactionResponse<MasterEditionAddresses>>;
-}
 
-// Uncompressed, Compressed
-#[async_trait]
-pub trait MintBackend {
-    fn mint(
+    fn update(
         &self,
-        collection_ty: CollectionType,
-        collection: &collections::Model,
-        txn: MintMetaplexEditionTransaction,
-    ) -> Result<TransactionResponse<MintEditionAddresses>>;
-
-    // TODO: probably better to replace all errors here with an Error enum
-    fn try_update(
-        &self,
-        collection_ty: CollectionType,
         collection: &collections::Model,
         txn: MetaplexMasterEditionTransaction,
-    ) -> Result<Option<TransactionResponse<UpdateMasterEditionAddresses>>>;
+    ) -> Result<TransactionResponse<UpdateMasterEditionAddresses>>;
+}
 
-    // Right now only this one needs to be async to support hitting the asset
-    // API for transfer data
+pub trait MintBackend<T, R> {
+    fn mint(&self, collection: &collections::Model, txn: T) -> Result<TransactionResponse<R>>;
+}
+
+#[async_trait]
+pub trait TransferBackend {
     async fn transfer(
         &self,
-        collection_ty: CollectionType,
         collection_mint: &collection_mints::Model,
         txn: TransferMetaplexAssetTransaction,
     ) -> Result<TransactionResponse<TransferAssetAddresses>>;

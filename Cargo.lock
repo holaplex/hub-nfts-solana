@@ -2260,6 +2260,7 @@ dependencies = [
  "holaplex-hub-core",
  "holaplex-hub-core-build",
  "holaplex-hub-nfts-solana-entity",
+ "mpl-bubblegum",
  "mpl-token-metadata",
  "prost",
  "sea-orm 0.11.3",

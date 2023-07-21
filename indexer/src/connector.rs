@@ -34,17 +34,14 @@ impl GeyserGrpcConnector {
         slots.insert("client".to_owned(), SubscribeRequestFilterSlots {});
 
         let mut transactions = HashMap::new();
-        transactions.insert(
-            "client".to_string(),
-            SubscribeRequestFilterTransactions {
-                vote: Some(false),
-                failed: Some(false),
-                signature: None,
-                account_include: vec![spl_token::ID.to_string()],
-                account_exclude: Vec::new(),
-                account_required: Vec::new(),
-            },
-        );
+        transactions.insert("client".to_string(), SubscribeRequestFilterTransactions {
+            vote: Some(false),
+            failed: Some(false),
+            signature: None,
+            account_include: vec![spl_token::ID.to_string()],
+            account_exclude: Vec::new(),
+            account_required: Vec::new(),
+        });
 
         SubscribeRequest {
             accounts: HashMap::new(),
