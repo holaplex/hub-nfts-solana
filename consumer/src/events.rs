@@ -14,7 +14,7 @@ use holaplex_hub_nfts_solana_core::{
     Collection, CollectionMint, CompressionLeaf, Services,
 };
 use holaplex_hub_nfts_solana_core::proto::CollectionImport;
-use holaplex_hub_nfts_solana_entity::{collection_mints, collections, compression_leafs};
+use holaplex_hub_nfts_solana_entity::{collection_mints, collections, compression_leafs, prelude::CollectionMints};
 use hub_core::{
     chrono::Utc,
     prelude::*,
@@ -614,14 +614,14 @@ impl Processor {
         } = tx.addresses;
         let id = key.id.parse()?;
 
-        let collection = collections::Model {
-            id,
-            master_edition: master_edition.to_string(),
-            owner: owner.to_string(),
-            metadata: metadata.to_string(),
-            associated_token_account: associated_token_account.to_string(),
-            mint: mint.to_string(),
-            update_authority: update_authority.to_string(),
+        let collection = collections::ActiveModel {
+            id: Set(id),
+            master_edition: Set(master_edition.to_string()),
+            owner: Set(owner.to_string()),
+            metadata: Set(metadata.to_string()),
+            associated_token_account: Set(associated_token_account.to_string()),
+            mint: Set(mint.to_string()),
+            update_authority: Set(update_authority.to_string()),
             ..Default::default()
         };
 
@@ -884,23 +884,34 @@ impl Processor {
             .get_asset(&mint_address)
             .await
             .map_err(ProcessorErrorKind::AssetApi)?;
+
+        info!("Importing collection: {:?}", collection.id);
+
         let collection_model = index_collection(key.clone(), collection, db, producer).await?;
+
         loop {
             let result = rpc
                 .search_assets(vec!["collection", &mint_address], page)
                 .await
                 .map_err(ProcessorErrorKind::AssetApi)?;
 
+            let mut mints = Vec::new();
             for asset in result.items {
-                index_collection_mint(
+                info!("Importing mint: {:?}", asset.id);
+                let am = emit_index_collection_mint_event(
                     key.clone(),
                     collection_model.id,
                     asset,
-                    db,
                     producer.clone(),
                 )
                 .await?;
+
+                mints.push(am);
             }
+
+            CollectionMints::insert_many(mints)
+                .exec(self.db.get())
+                .await?;
 
             if result.total < MAX_LIMIT {
                 break;
@@ -961,13 +972,13 @@ async fn index_collection(
     let (metadata_pubkey, _) = find_metadata_account(&mint);
 
     let (master_edition, _) = find_master_edition_account(&mint);
-    let collection_model = Collection::create(db, collections::Model {
-        master_edition: master_edition.to_string(),
-        update_authority: update_authority.to_string(),
-        associated_token_account: ata.to_string(),
-        owner: owner.to_string(),
-        mint: mint.to_string(),
-        metadata: metadata_pubkey.to_string(),
+    let collection_model = Collection::create(db, collections::ActiveModel {
+        master_edition: Set(master_edition.to_string()),
+        update_authority: Set(update_authority.to_string()),
+        associated_token_account: Set(ata.to_string()),
+        owner: Set(owner.to_string()),
+        mint: Set(mint.to_string()),
+        metadata: Set(metadata_pubkey.to_string()),
         ..Default::default()
     })
     .await?;
@@ -977,7 +988,7 @@ async fn index_collection(
             Some(&SolanaNftEvents {
                 event: Some(SolanaNftEvent::ImportedExternalCollection(
                     SolanaCollectionPayload {
-                        supply: collection.supply,
+                        supply: collection.supply.map(|s| s.print_max_supply),
                         mint_address: mint.to_string(),
                         seller_fee_basis_points,
                         creators,
@@ -1002,13 +1013,12 @@ async fn index_collection(
     Ok(collection_model)
 }
 
-async fn index_collection_mint(
+async fn emit_index_collection_mint_event(
     key: SolanaNftEventKey,
     collection: Uuid,
     asset: Asset,
-    db: &db::Connection,
     producer: Producer<SolanaNftEvents>,
-) -> ProcessResult<()> {
+) -> ProcessResult<collection_mints::ActiveModel> {
     let key = key.clone();
     let producer = producer.clone();
     let owner = asset.ownership.owner.into();
@@ -1051,14 +1061,13 @@ async fn index_collection_mint(
         })
         .collect::<Vec<_>>();
 
-    CollectionMint::create(db, collection_mints::Model {
-        collection_id: collection,
-        mint: mint.to_string(),
-        owner: owner.to_string(),
-        associated_token_account: Some(ata.to_string()),
+    let am = collection_mints::ActiveModel {
+        collection_id: Set(collection),
+        mint: Set(mint.to_string()),
+        owner: Set(owner.to_string()),
+        associated_token_account: Set(Some(ata.to_string())),
         ..Default::default()
-    })
-    .await?;
+    };
 
     tokio::spawn(async move {
         producer
@@ -1089,7 +1098,7 @@ async fn index_collection_mint(
             .map_err(ProcessorErrorKind::SendError)
     });
 
-    Ok(())
+    Ok(am)
 }
 
 impl From<&asset_api::File> for File {

@@ -27,7 +27,7 @@ mod b58 {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Base58(#[serde(with = "b58")] pub Vec<u8>);
 
 impl From<Vec<u8>> for Base58 {
@@ -54,7 +54,7 @@ impl ToString for Base58 {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Asset {
     pub interface: String,
     pub id: Base58,
@@ -65,17 +65,24 @@ pub struct Asset {
     pub royalty: AssetRoyalty,
     pub creators: Vec<AssetCreator>,
     pub ownership: AssetOwnership,
-    pub supply: Option<u32>,
+    pub supply: Option<AssetSupply>,
     pub mutable: bool,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AssetSupply {
+    pub print_max_supply: u32,
+    pub print_current_supply: u32,
+    pub edition_nonce: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AssetAuthority {
     pub address: Base58,
     pub scopes: Vec<String>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AssetCompression {
     pub eligible: bool,
     pub compressed: bool,
@@ -87,13 +94,13 @@ pub struct AssetCompression {
     pub leaf_id: u32,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AssetGrouping {
     pub group_key: String,
     pub group_value: Base58,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AssetRoyalty {
     pub royalty_model: String,
     pub target: Option<serde_json::Number>, // TODO: what type is this
@@ -103,14 +110,14 @@ pub struct AssetRoyalty {
     pub locked: bool,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AssetCreator {
     pub address: Base58,
     pub share: u32,
     pub verified: bool,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AssetOwnership {
     pub frozen: bool,
     pub delegated: bool,
@@ -119,7 +126,7 @@ pub struct AssetOwnership {
     pub owner: Base58,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AssetProof {
     pub root: Base58,
     pub proof: Vec<Base58>,
