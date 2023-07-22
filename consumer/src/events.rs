@@ -377,6 +377,18 @@ impl Processor {
                         self.process_treasury(EventKind::RetryMintDrop, key, res)
                             .await
                     },
+                    Some(TreasuryEvent::SolanaCreateCollectionSigned(res)) => {
+                        self.process_treasury(EventKind::CreateCollection, key, res)
+                            .await
+                    },
+                    Some(TreasuryEvent::SolanaUpdateCollectionSigned(res)) => {
+                        self.process_treasury(EventKind::UpdateCollection, key, res)
+                            .await
+                    },
+                    Some(TreasuryEvent::SolanaRetryCreateCollectionSigned(res)) => {
+                        self.process_treasury(EventKind::RetryCreateCollection, key, res)
+                            .await
+                    },
                     _ => Ok(()),
                 }
             },
