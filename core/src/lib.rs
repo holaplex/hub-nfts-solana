@@ -109,3 +109,23 @@ impl TryFrom<ProtoCreator> for Creator {
         })
     }
 }
+
+use mpl_bubblegum::state::metaplex_adapter::Creator as BubblegumCreator;
+
+impl TryFrom<ProtoCreator> for BubblegumCreator {
+    type Error = Error;
+
+    fn try_from(
+        ProtoCreator {
+            address,
+            verified,
+            share,
+        }: ProtoCreator,
+    ) -> Result<Self> {
+        Ok(Self {
+            address: address.parse()?,
+            verified,
+            share: share.try_into()?,
+        })
+    }
+}

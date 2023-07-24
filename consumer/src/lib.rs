@@ -2,6 +2,8 @@
 #![warn(clippy::pedantic, clippy::cargo)]
 #![allow(clippy::module_name_repetitions)]
 
+pub(crate) mod asset_api;
+mod backend;
 pub mod events;
 pub mod solana;
 
