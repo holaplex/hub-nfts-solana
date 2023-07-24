@@ -4,17 +4,19 @@ use holaplex_hub_nfts_solana_core::{
         nft_events::Event as NftEvent,
         solana_nft_events::Event as SolanaNftEvent,
         treasury_events::{Event as TreasuryEvent, SolanaTransactionResult, TransactionStatus},
-        MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction,
-        MintMetaplexMetadataTransaction, SolanaCompletedMintTransaction,
-        SolanaCompletedTransferTransaction, SolanaCompletedUpdateTransaction,
-        SolanaFailedTransaction, SolanaNftEventKey, SolanaNftEvents, SolanaPendingTransaction,
-        SolanaTransactionFailureReason, TransferMetaplexAssetTransaction, SolanaCreator, Metadata, SolanaCollectionPayload, File, Attribute, SolanaMintPayload,
+        Attribute, CollectionImport, File, Metadata, MetaplexMasterEditionTransaction,
+        MintMetaplexEditionTransaction, MintMetaplexMetadataTransaction, SolanaCollectionPayload,
+        SolanaCompletedMintTransaction, SolanaCompletedTransferTransaction,
+        SolanaCompletedUpdateTransaction, SolanaCreator, SolanaFailedTransaction,
+        SolanaMintPayload, SolanaNftEventKey, SolanaNftEvents, SolanaPendingTransaction,
+        SolanaTransactionFailureReason, TransferMetaplexAssetTransaction,
     },
-    sea_orm::{DbErr, Set},
+    sea_orm::{DbErr, EntityTrait, ModelTrait, Set},
     Collection, CollectionMint, CompressionLeaf, Services,
 };
-use holaplex_hub_nfts_solana_core::proto::CollectionImport;
-use holaplex_hub_nfts_solana_entity::{collection_mints, collections, compression_leafs, prelude::CollectionMints};
+use holaplex_hub_nfts_solana_entity::{
+    collection_mints, collections, compression_leafs, prelude::CollectionMints,
+};
 use hub_core::{
     chrono::Utc,
     prelude::*,
@@ -215,10 +217,12 @@ impl EventKind {
                     .await?
                     .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
-                Ok(SolanaNftEvent::MintToCollectionSubmitted(SolanaCompletedMintTransaction {
-                    signature,
-                    address: collection_mint.mint.to_string(),
-                }))
+                Ok(SolanaNftEvent::MintToCollectionSubmitted(
+                    SolanaCompletedMintTransaction {
+                        signature,
+                        address: collection_mint.mint.to_string(),
+                    },
+                ))
             },
             Self::UpdateCollection => Ok(SolanaNftEvent::UpdateCollectionSubmitted(
                 SolanaCompletedUpdateTransaction { signature },
@@ -274,12 +278,14 @@ impl EventKind {
                     .await?
                     .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
-                Ok(SolanaNftEvent::RetryMintToCollectionSubmitted(SolanaCompletedMintTransaction {
-                    signature,
-                    address: collection_mint.mint,
-                }))
+                Ok(SolanaNftEvent::RetryMintToCollectionSubmitted(
+                    SolanaCompletedMintTransaction {
+                        signature,
+                        address: collection_mint.mint,
+                    },
+                ))
             },
-        
+
             Self::ImportCollection => Err(ProcessorErrorKind::Solana(anyhow!("Invalid Operation"))),
         }
     }
@@ -429,7 +435,8 @@ impl Processor {
                                 payload,
                             ),
                         )
-                        .await },
+                        .await
+                    },
                     Some(NftEvent::StartedImportingSolanaCollection(payload)) => {
                         self.import_collection(key, payload).await.map_err(|k| {
                             ProcessorError::new(
@@ -872,9 +879,12 @@ impl Processor {
 
     async fn import_collection(
         &self,
-        key: SolanaNftEventKey,
-        CollectionImport {
-             mint_address }: CollectionImport,
+        SolanaNftEventKey {
+            user_id,
+            project_id,
+            ..
+        }: SolanaNftEventKey,
+        CollectionImport { mint_address }: CollectionImport,
     ) -> ProcessResult<()> {
         let rpc = &self.solana.0.asset_rpc();
         let db = &self.db;
@@ -885,6 +895,16 @@ impl Processor {
             .get_asset(&mint_address)
             .await
             .map_err(ProcessorErrorKind::AssetApi)?;
+
+        let collection_model = Collection::find_by_mint(db, collection.id.to_string()).await?;
+        if let Some(collection_model) = collection_model {
+            info!(
+                "Deleting already indexed collection: {:?}",
+                collection_model.id
+            );
+
+            collection_model.delete(db.get()).await?;
+        }
 
         info!("Importing collection: {:?}", collection.id.to_string());
 
@@ -903,7 +923,7 @@ impl Processor {
                 .await
                 .map_err(ProcessorErrorKind::AssetApi)?;
 
-            let mut mints = Vec::new();
+            let mut mints: Vec<collection_mints::ActiveModel> = Vec::new();
 
             for asset in result.items {
                 let project_id = project_id.clone();
@@ -915,7 +935,7 @@ impl Processor {
                 }
 
                 info!("Importing mint: {:?}", asset.id.to_string());
-                let am = emit_index_collection_mint_event(
+                let model = emit_index_collection_mint_event(
                     project_id,
                     user_id,
                     collection_model.id,
@@ -924,7 +944,7 @@ impl Processor {
                 )
                 .await?;
 
-                mints.push(am);
+                mints.push(model.into());
             }
 
             CollectionMints::insert_many(mints)
@@ -960,7 +980,7 @@ async fn index_collection(
 
     let image = files
         .iter()
-        .find(|f| f.mime.clone().unwrap().contains("image"))
+        .find(|f| f.mime.as_ref().map_or(false, |m| m.contains("image")))
         .map(|f| f.uri.clone())
         .unwrap_or_default();
 
@@ -1041,7 +1061,7 @@ async fn emit_index_collection_mint_event(
     collection: Uuid,
     asset: Asset,
     producer: Producer<SolanaNftEvents>,
-) -> ProcessResult<collection_mints::ActiveModel> {
+) -> ProcessResult<collection_mints::Model> {
     let owner = asset.ownership.owner.into();
 
     let mint = asset.id.into();
@@ -1063,15 +1083,8 @@ async fn emit_index_collection_mint_event(
 
     let image = files
         .iter()
-        .find_map(|f| {
-            f.mime.as_ref().and_then(|mime| {
-                if mime.contains("image") {
-                    Some(f.uri.clone())
-                } else {
-                    None
-                }
-            })
-        })
+        .find(|f| f.mime.as_ref().map_or(false, |m| m.contains("image")))
+        .map(|f| f.uri.clone())
         .unwrap_or_default();
 
     let attributes = metadata
@@ -1089,14 +1102,16 @@ async fn emit_index_collection_mint_event(
         })
         .collect::<Vec<_>>();
 
+    #[allow(clippy::cast_sign_loss)]
     let uuid = Uuid::from_u64_pair(Utc::now().timestamp_nanos() as u64, rand::random::<u64>());
-    let am = collection_mints::ActiveModel {
-        id: Set(uuid),
-        collection_id: Set(collection),
-        mint: Set(mint.to_string()),
-        owner: Set(owner.to_string()),
-        associated_token_account: Set(Some(ata.to_string())),
-        ..Default::default()
+
+    let mint_model = collection_mints::Model {
+        id: uuid,
+        collection_id: collection,
+        mint: mint.to_string(),
+        owner: owner.to_string(),
+        associated_token_account: ata.to_string(),
+        created_at: Utc::now().naive_utc(),
     };
 
     tokio::spawn(async move {
@@ -1132,7 +1147,7 @@ async fn emit_index_collection_mint_event(
             .map_err(ProcessorErrorKind::SendError)
     });
 
-    Ok(am)
+    Ok(mint_model)
 }
 
 impl From<&asset_api::File> for File {
