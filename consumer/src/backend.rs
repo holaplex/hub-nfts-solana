@@ -26,6 +26,16 @@ pub struct MintEditionAddresses {
 }
 
 #[derive(Clone)]
+pub struct MintMetaplexAddresses {
+    pub mint: Pubkey,
+    pub metadata: Pubkey,
+    pub owner: Pubkey,
+    pub associated_token_account: Pubkey,
+    pub recipient: Pubkey,
+    pub update_authority: Pubkey,
+}
+
+#[derive(Clone)]
 pub struct MintCompressedMintV1Addresses {
     pub owner: Pubkey,
     pub recipient: Pubkey,
