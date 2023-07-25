@@ -1,4 +1,3 @@
-use anchor_lang::Event;
 use holaplex_hub_nfts_solana_core::{
     db,
     proto::{
@@ -12,9 +11,9 @@ use holaplex_hub_nfts_solana_core::{
         SolanaTransactionFailureReason, TransferMetaplexAssetTransaction,
     },
     sea_orm::{DbErr, Set},
-    Collection, CollectionMint, Services,
+    Collection, CollectionMint, CompressionLeaf, Services,
 };
-use holaplex_hub_nfts_solana_entity::{collection_mints, collections};
+use holaplex_hub_nfts_solana_entity::{collection_mints, collections, compression_leafs};
 use hub_core::{
     chrono::Utc,
     prelude::*,
@@ -30,7 +29,7 @@ use crate::{
         CollectionBackend, MasterEditionAddresses, MintBackend, MintEditionAddresses,
         MintMetaplexAddresses, TransferBackend,
     },
-    solana::{EditionRef, Solana, UncompressedRef},
+    solana::{CompressedRef, EditionRef, Solana, UncompressedRef},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -330,7 +329,7 @@ impl Processor {
                         self.process_nft(
                             EventKind::MintToCollection,
                             &key,
-                            self.mint_to_collection(&UncompressedRef(self.solana()), &key, payload),
+                            self.mint_to_collection(&key, payload),
                         )
                         .await
                     },
@@ -595,11 +594,8 @@ impl Processor {
         Ok(tx.into())
     }
 
-    async fn mint_to_collection<
-        B: MintBackend<MintMetaplexMetadataTransaction, MintMetaplexAddresses>,
-    >(
+    async fn mint_to_collection(
         &self,
-        backend: &B,
         key: &SolanaNftEventKey,
         payload: MintMetaplexMetadataTransaction,
     ) -> ProcessResult<SolanaPendingTransaction> {
@@ -609,6 +605,31 @@ impl Processor {
             .await?
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
+        if payload.compressed {
+            let backend = &CompressedRef(self.solana());
+
+            let tx = backend
+                .mint(&collection, payload)
+                .map_err(ProcessorErrorKind::Solana)?;
+
+            let compression_leaf = compression_leafs::Model {
+                id,
+                collection_id: collection.id,
+                merkle_tree: tx.addresses.merkle_tree.to_string(),
+                tree_authority: tx.addresses.tree_authority.to_string(),
+                tree_delegate: tx.addresses.tree_delegate.to_string(),
+                leaf_owner: tx.addresses.leaf_owner.to_string(),
+                created_at: Utc::now().naive_utc(),
+                ..Default::default()
+            };
+
+            CompressionLeaf::create(&self.db, compression_leaf).await?;
+
+            return Ok(tx.into());
+        }
+
+        let backend = &UncompressedRef(self.solana());
+
         let tx = backend
             .mint(&collection, payload)
             .map_err(ProcessorErrorKind::Solana)?;
@@ -616,10 +637,11 @@ impl Processor {
         let collection_mint = collection_mints::Model {
             id,
             collection_id: collection.id,
-            mint: tx.addresses.mint.to_string(),
             owner: tx.addresses.recipient.to_string(),
-            associated_token_account: Some(tx.addresses.associated_token_account.to_string()),
+            mint: tx.addresses.mint.to_string(),
             created_at: Utc::now().naive_utc(),
+            associated_token_account: tx.addresses.associated_token_account.to_string(),
+            ..Default::default()
         };
 
         CollectionMint::create(&self.db, collection_mint).await?;
@@ -648,7 +670,7 @@ impl Processor {
             collection_id: collection.id,
             mint: tx.addresses.mint.to_string(),
             owner: tx.addresses.recipient.to_string(),
-            associated_token_account: Some(tx.addresses.associated_token_account.to_string()),
+            associated_token_account: tx.addresses.associated_token_account.to_string(),
             created_at: Utc::now().naive_utc(),
         };
 
@@ -764,7 +786,7 @@ impl Processor {
 
         collection_mint.mint = Set(mint.to_string());
         collection_mint.owner = Set(recipient.to_string());
-        collection_mint.associated_token_account = Set(Some(associated_token_account.to_string()));
+        collection_mint.associated_token_account = Set(associated_token_account.to_string());
 
         CollectionMint::update(&self.db, collection_mint).await?;
 
@@ -803,7 +825,7 @@ impl Processor {
 
         collection_mint.mint = Set(mint.to_string());
         collection_mint.owner = Set(recipient.to_string());
-        collection_mint.associated_token_account = Set(Some(associated_token_account.to_string()));
+        collection_mint.associated_token_account = Set(associated_token_account.to_string());
 
         CollectionMint::update(&self.db, collection_mint).await?;
 

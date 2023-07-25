@@ -13,8 +13,8 @@ pub struct Model {
     pub mint: String,
     #[sea_orm(column_type = "Text")]
     pub owner: String,
-    #[sea_orm(column_type = "Text", nullable)]
-    pub associated_token_account: Option<String>,
+    #[sea_orm(column_type = "Text")]
+    pub associated_token_account: String,
     pub created_at: DateTime,
 }
 

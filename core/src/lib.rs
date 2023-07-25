@@ -4,10 +4,12 @@
 
 mod collection_mints;
 mod collections;
+mod compression_leafs;
 pub mod db;
 
 pub use collection_mints::CollectionMint;
 pub use collections::Collection;
+pub use compression_leafs::CompressionLeaf;
 use hub_core::{consumer::RecvError, prelude::*};
 use proto::{NftEventKey, SolanaNftEventKey, TreasuryEventKey};
 pub use sea_orm;

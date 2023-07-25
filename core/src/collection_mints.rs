@@ -33,7 +33,7 @@ impl CollectionMint {
 
         let mut active_model: ActiveModel = model.clone().into();
         active_model.owner = Set(owner);
-        active_model.associated_token_account = Set(Some(ata));
+        active_model.associated_token_account = Set(ata);
         active_model.update(conn).await
     }
 
