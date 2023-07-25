@@ -37,8 +37,10 @@ pub struct MintMetaplexAddresses {
 
 #[derive(Clone)]
 pub struct MintCompressedMintV1Addresses {
-    pub owner: Pubkey,
-    pub recipient: Pubkey,
+    pub merkle_tree: Pubkey,
+    pub tree_authority: Pubkey,
+    pub tree_delegate: Pubkey,
+    pub leaf_owner: Pubkey,
 }
 
 #[derive(Clone)]

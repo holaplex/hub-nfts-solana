@@ -53,7 +53,6 @@ pub struct SolanaArgs {
     #[arg(long, env)]
     pub digital_asset_api_endpoint: String,
 
-    // TODO: remove these
     #[arg(long, env)]
     pub tree_authority: Pubkey,
     #[arg(long, env)]
@@ -280,7 +279,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
                 true,
                 None,
                 None,
-                None,
+                Some(mpl_token_metadata::state::CollectionDetails::V1 { size: 0 }),
             );
         let create_master_edition_ins = mpl_token_metadata::instruction::create_master_edition_v3(
             mpl_token_metadata::ID,
@@ -668,7 +667,8 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintCompressedMintV1Addres
         let payer = self.0.treasury_wallet_address;
         let recipient = recipient_address.parse()?;
         let owner = owner_address.parse()?;
-        let treasury_wallet_address = self.0.treasury_wallet_address;
+        let merkle_tree = self.0.bubblegum_merkle_tree;
+        let tree_authority = self.0.bubblegum_tree_authority;
 
         let mut accounts = vec![
             // Tree authority
@@ -679,11 +679,11 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintCompressedMintV1Addres
             // Leaf delegate
             AccountMeta::new_readonly(recipient, false),
             // Merkle tree
-            AccountMeta::new(self.0.bubblegum_merkle_tree, false),
+            AccountMeta::new(merkle_tree, false),
             // Payer [signer]
             AccountMeta::new_readonly(payer, true),
             // Tree delegate [signer]
-            AccountMeta::new_readonly(treasury_wallet_address, true),
+            AccountMeta::new_readonly(payer, true),
             // Collection authority [signer]
             AccountMeta::new_readonly(owner, true),
             // Collection authority pda
@@ -724,7 +724,7 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintCompressedMintV1Addres
                     edition_nonce: None,
                     token_standard: None,
                     collection: Some(Collection {
-                        verified: true,
+                        verified: false,
                         key: collection.mint.parse()?,
                     }),
                     uses: None,
@@ -748,7 +748,12 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintCompressedMintV1Addres
         Ok(TransactionResponse {
             serialized_message,
             signatures_or_signers_public_keys: vec![payer.to_string(), owner.to_string()],
-            addresses: MintCompressedMintV1Addresses { owner, recipient },
+            addresses: MintCompressedMintV1Addresses {
+                leaf_owner: recipient,
+                tree_delegate: payer,
+                tree_authority,
+                merkle_tree,
+            },
         })
     }
 }
@@ -853,7 +858,7 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintMetaplexAddresses>
                 None,
             );
 
-        let verify_collection = mpl_token_metadata::instruction::verify_collection(
+        let verify_collection = mpl_token_metadata::instruction::verify_sized_collection_item(
             mpl_token_metadata::ID,
             metadata,
             owner,
@@ -886,8 +891,8 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintMetaplexAddresses>
             serialized_message,
             signatures_or_signers_public_keys: vec![
                 payer.to_string(),
-                owner.to_string(),
                 mint_signature.to_string(),
+                owner.to_string(),
             ],
             addresses: MintMetaplexAddresses {
                 update_authority: owner,
