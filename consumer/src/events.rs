@@ -84,7 +84,7 @@ impl ErrorSource {
             Self::NftSignRequest => "NFT transaction signature request",
             Self::TreasuryStatus => "treasury status check",
             Self::TreasurySuccess => "treasury success response",
-            Self::TreasuryFailure => "treasury success failure",
+            Self::TreasuryFailure => "treasury failure response",
         }
     }
 }
