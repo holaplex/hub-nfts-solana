@@ -5,7 +5,7 @@
 pub(crate) mod asset_api;
 mod backend;
 pub mod events;
-mod import;
+pub mod import;
 pub mod solana;
 use holaplex_hub_nfts_solana_core::db::DbArgs;
 use hub_core::{clap, prelude::*};

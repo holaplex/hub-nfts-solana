@@ -1,12 +1,12 @@
 use holaplex_hub_nfts_solana_core::{
     db,
     proto::{
-        solana_nft_events::Event as SolanaNftEvent, Attribute, CollectionImport, File, Metadata,
-        SolanaCollectionPayload, SolanaCreator, SolanaMintPayload, SolanaNftEventKey,
-        SolanaNftEvents,
+        nft_events::Event as NftEvent, solana_nft_events::Event as SolanaNftEvent, Attribute,
+        CollectionImport, File, Metadata, SolanaCollectionPayload, SolanaCreator,
+        SolanaMintPayload, SolanaNftEventKey, SolanaNftEvents,
     },
     sea_orm::{EntityTrait, ModelTrait, Set},
-    Collection,
+    Collection, Services,
 };
 use holaplex_hub_nfts_solana_entity::{collection_mints, collections, prelude::CollectionMints};
 use hub_core::{chrono::Utc, prelude::*, producer::Producer, tokio, util::DebugShim, uuid::Uuid};
@@ -18,28 +18,44 @@ use crate::{
     solana::Solana,
 };
 
-const MAX_LIMIT: u64 = 1000;
-
-pub struct CollectionImporter {
+// TODO: could this just be a newtype over events::Processor?
+#[derive(Debug, Clone)]
+pub struct Processor {
+    solana: DebugShim<Solana>,
     db: db::Connection,
     producer: Producer<SolanaNftEvents>,
-    solana: DebugShim<Solana>,
 }
 
-impl CollectionImporter {
+impl Processor {
     pub fn new(
+        solana: Solana,
         db: db::Connection,
         producer: Producer<SolanaNftEvents>,
-        solana: DebugShim<Solana>,
     ) -> Self {
         Self {
+            solana: DebugShim(solana),
             db,
             producer,
-            solana,
         }
     }
 
-    pub async fn process(
+    pub async fn process(&self, msg: &Services) -> Result<Option<()>> {
+        match msg {
+            Services::Nfts(key, msg) => {
+                let key = SolanaNftEventKey::from(key.clone());
+
+                match msg.event {
+                    Some(NftEvent::StartedImportingSolanaCollection(ref c)) => {
+                        self.process_import(key, c.clone()).await.map(Some)
+                    },
+                    _ => Ok(None),
+                }
+            },
+            _ => Ok(None),
+        }
+    }
+
+    async fn process_import(
         &self,
         SolanaNftEventKey {
             user_id,
@@ -48,6 +64,8 @@ impl CollectionImporter {
         }: SolanaNftEventKey,
         CollectionImport { mint_address }: CollectionImport,
     ) -> Result<()> {
+        const MAX_LIMIT: u64 = 1000;
+
         let rpc = &self.solana.0.asset_rpc();
         let db = &self.db;
         let producer = &self.producer;
@@ -158,15 +176,18 @@ impl CollectionImporter {
         let (metadata_pubkey, _) = find_metadata_account(&mint);
 
         let (master_edition, _) = find_master_edition_account(&mint);
-        let collection_model = Collection::create(db, collections::ActiveModel {
-            master_edition: Set(master_edition.to_string()),
-            update_authority: Set(update_authority.to_string()),
-            associated_token_account: Set(ata.to_string()),
-            owner: Set(owner.to_string()),
-            mint: Set(mint.to_string()),
-            metadata: Set(metadata_pubkey.to_string()),
-            ..Default::default()
-        })
+        let collection_model = Collection::create(
+            db,
+            collections::ActiveModel {
+                master_edition: Set(master_edition.to_string()),
+                update_authority: Set(update_authority.to_string()),
+                associated_token_account: Set(ata.to_string()),
+                owner: Set(owner.to_string()),
+                mint: Set(mint.to_string()),
+                metadata: Set(metadata_pubkey.to_string()),
+                ..Default::default()
+            },
+        )
         .await?;
 
         producer
