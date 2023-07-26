@@ -1,3 +1,4 @@
+use core::fmt;
 use std::collections::HashMap;
 
 use solana_program::pubkey::Pubkey;
@@ -48,9 +49,9 @@ impl From<Base58> for Pubkey {
     }
 }
 
-impl ToString for Base58 {
-    fn to_string(&self) -> String {
-        Pubkey::new(&self.0).to_string()
+impl fmt::Display for Base58 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(&bs58::encode(&self.0).into_string())
     }
 }
 

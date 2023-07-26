@@ -9,7 +9,7 @@ use holaplex_hub_nfts_solana_core::{
     Collection, Services,
 };
 use holaplex_hub_nfts_solana_entity::{collection_mints, collections, prelude::CollectionMints};
-use hub_core::{chrono::Utc, prelude::*, producer::Producer, tokio, util::DebugShim, uuid::Uuid};
+use hub_core::{chrono::Utc, prelude::*, producer::Producer, util::DebugShim, uuid::Uuid};
 use mpl_token_metadata::pda::{find_master_edition_account, find_metadata_account};
 use spl_associated_token_account::get_associated_token_address;
 
@@ -27,11 +27,7 @@ pub struct Processor {
 }
 
 impl Processor {
-    pub fn new(
-        solana: Solana,
-        db: db::Connection,
-        producer: Producer<SolanaNftEvents>,
-    ) -> Self {
+    pub fn new(solana: Solana, db: db::Connection, producer: Producer<SolanaNftEvents>) -> Self {
         Self {
             solana: DebugShim(solana),
             db,
@@ -68,7 +64,7 @@ impl Processor {
 
         let rpc = &self.solana.0.asset_rpc();
         let db = &self.db;
-        let producer = &self.producer;
+
         let mut page = 1;
 
         let collection = rpc.get_asset(&mint_address).await?;
@@ -176,18 +172,15 @@ impl Processor {
         let (metadata_pubkey, _) = find_metadata_account(&mint);
 
         let (master_edition, _) = find_master_edition_account(&mint);
-        let collection_model = Collection::create(
-            db,
-            collections::ActiveModel {
-                master_edition: Set(master_edition.to_string()),
-                update_authority: Set(update_authority.to_string()),
-                associated_token_account: Set(ata.to_string()),
-                owner: Set(owner.to_string()),
-                mint: Set(mint.to_string()),
-                metadata: Set(metadata_pubkey.to_string()),
-                ..Default::default()
-            },
-        )
+        let collection_model = Collection::create(db, collections::ActiveModel {
+            master_edition: Set(master_edition.to_string()),
+            update_authority: Set(update_authority.to_string()),
+            associated_token_account: Set(ata.to_string()),
+            owner: Set(owner.to_string()),
+            mint: Set(mint.to_string()),
+            metadata: Set(metadata_pubkey.to_string()),
+            ..Default::default()
+        })
         .await?;
 
         producer
@@ -230,7 +223,6 @@ impl Processor {
         collection: Uuid,
         asset: Asset,
     ) -> Result<collection_mints::Model> {
-        let db = &self.db;
         let producer = self.producer.clone();
         let owner = asset.ownership.owner.into();
 
@@ -284,37 +276,35 @@ impl Processor {
             created_at: Utc::now().naive_utc(),
         };
 
-        tokio::spawn(async move {
-            producer
-                .send(
-                    Some(&SolanaNftEvents {
-                        event: Some(SolanaNftEvent::ImportedExternalMint(SolanaMintPayload {
-                            collection_id: collection.to_string(),
-                            mint_address: mint.to_string(),
-                            owner: owner.to_string(),
-                            seller_fee_basis_points,
-                            compressed: asset.compression.compressed,
-                            creators,
-                            metadata: Some(Metadata {
-                                name: metadata.name,
-                                description: metadata.description,
-                                symbol: metadata.symbol,
-                                attributes,
-                                uri: asset.content.json_uri,
-                                image,
-                            }),
-                            files,
-                            update_authority: update_authority.to_string(),
-                        })),
-                    }),
-                    Some(&SolanaNftEventKey {
-                        id: uuid.to_string(),
-                        user_id,
-                        project_id,
-                    }),
-                )
-                .await
-        });
+        producer
+            .send(
+                Some(&SolanaNftEvents {
+                    event: Some(SolanaNftEvent::ImportedExternalMint(SolanaMintPayload {
+                        collection_id: collection.to_string(),
+                        mint_address: mint.to_string(),
+                        owner: owner.to_string(),
+                        seller_fee_basis_points,
+                        compressed: asset.compression.compressed,
+                        creators,
+                        metadata: Some(Metadata {
+                            name: metadata.name,
+                            description: metadata.description,
+                            symbol: metadata.symbol,
+                            attributes,
+                            uri: asset.content.json_uri,
+                            image,
+                        }),
+                        files,
+                        update_authority: update_authority.to_string(),
+                    })),
+                }),
+                Some(&SolanaNftEventKey {
+                    id: uuid.to_string(),
+                    user_id,
+                    project_id,
+                }),
+            )
+            .await?;
 
         Ok(mint_model)
     }
