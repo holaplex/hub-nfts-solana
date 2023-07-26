@@ -128,10 +128,14 @@ impl Solana {
             bubblegum_merkle_tree: merkle_tree,
             bubblegum_cpi_address,
             asset_rpc_client: jsonrpsee::http_client::HttpClientBuilder::default()
-                .request_timeout(std::time::Duration::from_secs(5))
+                .request_timeout(std::time::Duration::from_secs(15))
                 .build(digital_asset_api_endpoint)
                 .context("Failed to initialize asset API client")?,
         })
+    }
+
+    pub fn asset_rpc(&self) -> jsonrpsee::http_client::HttpClient {
+        self.asset_rpc_client.clone()
     }
 
     #[must_use]

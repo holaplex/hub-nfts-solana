@@ -586,10 +586,10 @@ impl Processor {
             associated_token_account: associated_token_account.to_string(),
             mint: mint.to_string(),
             update_authority: update_authority.to_string(),
-            ..Default::default()
+            created_at: Utc::now().naive_utc(),
         };
 
-        Collection::create(&self.db, collection).await?;
+        Collection::create(&self.db, collection.into()).await?;
 
         Ok(tx.into())
     }
