@@ -165,7 +165,7 @@ pub struct Metadata {
     pub attributes: Option<Vec<Attribute>>,
     pub description: Option<String>,
     pub name: String,
-    pub symbol: String,
+    pub symbol: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
