@@ -195,7 +195,7 @@ impl Processor {
                             metadata: Some(Metadata {
                                 name: metadata.name,
                                 description: metadata.description,
-                                symbol: metadata.symbol,
+                                symbol: metadata.symbol.unwrap_or_default(),
                                 attributes,
                                 uri: collection.content.json_uri,
                                 image,
@@ -289,7 +289,7 @@ impl Processor {
                         metadata: Some(Metadata {
                             name: metadata.name,
                             description: metadata.description,
-                            symbol: metadata.symbol,
+                            symbol: metadata.symbol.unwrap_or_default(),
                             attributes,
                             uri: asset.content.json_uri,
                             image,
