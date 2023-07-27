@@ -23,13 +23,15 @@ use hub_core::{
     uuid,
     uuid::Uuid,
 };
+use solana_program::pubkey::{ParsePubkeyError, Pubkey};
+use solana_sdk::signature::Signature;
 
 use crate::{
     backend::{
         CollectionBackend, MasterEditionAddresses, MintBackend, MintEditionAddresses,
         MintMetaplexAddresses, TransferBackend,
     },
-    solana::{CompressedRef, EditionRef, Solana, UncompressedRef},
+    solana::{CompressedRef, EditionRef, Solana, SolanaAssetIdError, UncompressedRef},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -47,6 +49,12 @@ pub enum ProcessorErrorKind {
     InvalidUuid(#[from] uuid::Error),
     #[error("Database error")]
     DbError(#[from] DbErr),
+    #[error("Public key parse error")]
+    ParsePubkey(#[from] ParsePubkeyError),
+    #[error("Unable to parse signature from string")]
+    ParseString(#[from] solana_sdk::signature::ParseSignatureError),
+    #[error("Unable to extract compression nonce from signature")]
+    AssetId(#[from] SolanaAssetIdError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -143,6 +151,7 @@ impl EventKind {
     async fn into_success(
         self,
         db: &db::Connection,
+        solana: &Solana,
         key: &SolanaNftEventKey,
         signature: String,
     ) -> ProcessResult<SolanaNftEvent> {
@@ -191,13 +200,38 @@ impl EventKind {
             },
             Self::MintToCollection => {
                 let id = id()?;
-                let collection_mint = CollectionMint::find_by_id(db, id)
-                    .await?
-                    .ok_or(ProcessorErrorKind::RecordNotFound)?;
+                let collection_mint = CollectionMint::find_by_id(db, id).await?;
+
+                let compression_leafs = CompressionLeaf::find_by_id(db, id).await?;
+
+                let address = if let Some(compression_leaf) = compression_leafs {
+                    let signature = Signature::from_str(&signature)?;
+                    let nonce = solana.extract_compression_nonce(&signature)?;
+
+                    let asset_id = mpl_bubblegum::utils::get_asset_id(
+                        &Pubkey::from_str(&compression_leaf.merkle_tree)?,
+                        nonce.into(),
+                    );
+
+                    let asset_id = asset_id.to_string();
+
+                    let mut compression_leaf: compression_leafs::ActiveModel =
+                        compression_leaf.into();
+
+                    compression_leaf.asset_id = Set(Some(asset_id.clone()));
+
+                    CompressionLeaf::update(db, compression_leaf).await?;
+
+                    asset_id
+                } else {
+                    collection_mint
+                        .ok_or(ProcessorErrorKind::RecordNotFound)?
+                        .mint
+                };
 
                 SolanaNftEvent::MintToCollectionSubmitted(SolanaCompletedMintTransaction {
                     signature,
-                    address: collection_mint.mint.to_string(),
+                    address,
                 })
             },
             Self::MintDrop => {
@@ -531,7 +565,7 @@ impl Processor {
         self.producer
             .send(
                 Some(&SolanaNftEvents {
-                    event: Some(kind.into_success(&self.db, key, sig).await?),
+                    event: Some(kind.into_success(&self.db, self.solana(), key, sig).await?),
                 }),
                 Some(key),
             )
