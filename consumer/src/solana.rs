@@ -1,11 +1,11 @@
-use anchor_lang::{prelude::AccountMeta, InstructionData};
+use anchor_lang::{prelude::AccountMeta, AnchorDeserialize, InstructionData};
 use holaplex_hub_nfts_solana_core::proto::{
     treasury_events::SolanaTransactionResult, MasterEdition, MetaplexMasterEditionTransaction,
     MetaplexMetadata, MintMetaplexEditionTransaction, MintMetaplexMetadataTransaction,
     TransferMetaplexAssetTransaction,
 };
 use holaplex_hub_nfts_solana_entity::{collection_mints, collections};
-use hub_core::{anyhow::Result, clap, prelude::*, thiserror::Error, uuid::Uuid};
+use hub_core::{anyhow::Result, clap, prelude::*, thiserror, uuid::Uuid};
 use mpl_bubblegum::state::metaplex_adapter::{
     Collection, Creator as BubblegumCreator, TokenProgramVersion,
 };
@@ -22,6 +22,11 @@ use solana_sdk::{
     signature::Signature,
     signer::{keypair::Keypair, Signer},
     transaction::Transaction,
+};
+use solana_transaction_status::{UiInnerInstructions, UiInstruction, UiTransactionEncoding};
+use spl_account_compression::{
+    events::{AccountCompressionEvent, ChangeLogEventV1},
+    ChangeLogEvent,
 };
 use spl_associated_token_account::{
     get_associated_token_address, instruction::create_associated_token_account,
@@ -85,7 +90,7 @@ pub struct TransferAssetRequest {
     pub mint_address: String,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 enum SolanaErrorNotFoundMessage {
     #[error("master edition message not found")]
     MasterEdition,
@@ -93,6 +98,22 @@ enum SolanaErrorNotFoundMessage {
     Serialized,
     #[error("metadata message not found")]
     Metadata,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SolanaAssetIdError {
+    #[error("The transaction has no meta field")]
+    NoTransactionMeta,
+    #[error("no inner instruction found")]
+    NoInnerInstruction,
+    #[error("Solana rpc error")]
+    Rpc(#[from] solana_client::client_error::ClientError),
+    #[error("No nonce found in log messages")]
+    NoNonce,
+    #[error("Parsing base58 string")]
+    Base58(#[from] bs58::decode::Error),
+    #[error("Borsh deserialization error")]
+    BorshDeserialize(#[from] std::io::Error),
 }
 
 #[derive(Clone)]
@@ -137,6 +158,52 @@ impl Solana {
     #[must_use]
     pub fn rpc(&self) -> Arc<RpcClient> {
         self.rpc_client.clone()
+    }
+
+    /// Res
+    ///
+    /// # Errors
+    /// This function fails if unable to query or pull the asset id from the instruction data of the transaction
+    pub fn extract_compression_nonce(
+        &self,
+        signature: &Signature,
+    ) -> Result<u32, SolanaAssetIdError> {
+        let response = self
+            .rpc()
+            .get_transaction(signature, UiTransactionEncoding::Json)?;
+
+        let meta = response
+            .transaction
+            .meta
+            .ok_or(SolanaAssetIdError::NoTransactionMeta)?;
+
+        let inner_instructions: Option<Vec<UiInnerInstructions>> = meta.inner_instructions.into();
+        let inner_instructions =
+            inner_instructions.ok_or(SolanaAssetIdError::NoInnerInstruction)?;
+
+        let instructions = inner_instructions
+            .get(0)
+            .ok_or(SolanaAssetIdError::NoInnerInstruction)?;
+        let noop_change_log_instruction = instructions
+            .instructions
+            .get(3)
+            .ok_or(SolanaAssetIdError::NoInnerInstruction)?;
+
+        if let UiInstruction::Compiled(instruction) = noop_change_log_instruction {
+            let data = bs58::decode(&instruction.data).into_vec()?;
+
+            match AccountCompressionEvent::try_from_slice(&data)? {
+                AccountCompressionEvent::ChangeLog(changelog_event) => {
+                    let ChangeLogEvent::V1(changelog_event) = changelog_event;
+                    let ChangeLogEventV1 { index, .. } = changelog_event;
+
+                    Ok(index)
+                },
+                AccountCompressionEvent::ApplicationData(_) => Err(SolanaAssetIdError::NoNonce),
+            }
+        } else {
+            Err(SolanaAssetIdError::NoNonce)
+        }
     }
 
     /// Res
@@ -704,8 +771,7 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintCompressedMintV1Addres
 
         if creators
             .iter()
-            .find(|&creator| creator.verified && creator.address == owner.to_string())
-            .is_some()
+            .any(|creator| creator.verified && creator.address == owner.to_string())
         {
             accounts.push(AccountMeta::new_readonly(owner, true));
         }
