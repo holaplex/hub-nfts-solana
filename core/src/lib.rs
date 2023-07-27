@@ -4,10 +4,12 @@
 
 mod collection_mints;
 mod collections;
+mod compression_leafs;
 pub mod db;
 
 pub use collection_mints::CollectionMint;
 pub use collections::Collection;
+pub use compression_leafs::CompressionLeaf;
 use hub_core::{consumer::RecvError, prelude::*};
 use proto::{NftEventKey, SolanaNftEventKey, TreasuryEventKey};
 pub use sea_orm;
@@ -93,6 +95,26 @@ use mpl_token_metadata::state::Creator;
 use crate::proto::Creator as ProtoCreator;
 
 impl TryFrom<ProtoCreator> for Creator {
+    type Error = Error;
+
+    fn try_from(
+        ProtoCreator {
+            address,
+            verified,
+            share,
+        }: ProtoCreator,
+    ) -> Result<Self> {
+        Ok(Self {
+            address: address.parse()?,
+            verified,
+            share: share.try_into()?,
+        })
+    }
+}
+
+use mpl_bubblegum::state::metaplex_adapter::Creator as BubblegumCreator;
+
+impl TryFrom<ProtoCreator> for BubblegumCreator {
     type Error = Error;
 
     fn try_from(

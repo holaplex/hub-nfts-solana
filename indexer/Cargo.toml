@@ -20,13 +20,13 @@ sea-orm = { version = "^0.10.0", features = [
 bs58 = "0.5.0"
 futures = "0.3.24"
 hex = "0.4.3"
-solana-sdk = "=1.14.18"
-solana-program = "=1.14.18"
+solana-sdk = "1.14"
+solana-program = "1.14"
 yellowstone-grpc-client = { git = "https://github.com/rpcpool/yellowstone-grpc", tag = "v1.0.0+solana.1.16.1" }
 yellowstone-grpc-proto = { git = "https://github.com/rpcpool/yellowstone-grpc", tag = "v1.0.0+solana.1.16.1" }
 dashmap = "5.4.0"
 spl-token = "=3.5.0"
-solana-client = "=1.14.18"
+solana-client = "1.14"
 backoff = { version = "0.4.0", features = ["tokio"] }
 
 

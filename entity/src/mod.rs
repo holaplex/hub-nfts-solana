@@ -3,4 +3,6 @@
 pub mod prelude;
 
 pub mod collection_mints;
-pub mod collections;
+pub mod editions;
+pub mod certified_collections;
+pub mod compression_leafs;

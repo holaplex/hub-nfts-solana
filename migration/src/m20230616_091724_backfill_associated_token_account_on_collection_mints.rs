@@ -41,7 +41,7 @@ impl MigrationTrait for Migration {
                 get_associated_token_address(&wallet_address, &mint_address);
 
             let mut mint: ActiveModel = mint.into();
-            mint.associated_token_account = Set(Some(associated_token_account.to_string()));
+            mint.associated_token_account = Set(associated_token_account.to_string());
 
             mint.update(db).await?;
         }

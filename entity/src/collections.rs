@@ -14,6 +14,7 @@ pub struct Model {
     pub mint: String,
     pub metadata: String,
     pub created_at: DateTime,
+    // TODO: add supply column to help denote mcc from editions
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
