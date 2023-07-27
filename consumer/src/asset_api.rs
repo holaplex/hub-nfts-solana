@@ -43,9 +43,11 @@ impl From<Base58> for Vec<u8> {
     }
 }
 
-impl From<Base58> for Pubkey {
-    fn from(Base58(v): Base58) -> Self {
-        Pubkey::new(&v)
+impl TryFrom<Base58> for Pubkey {
+    type Error = std::array::TryFromSliceError;
+
+    fn try_from(Base58(v): Base58) -> Result<Self, Self::Error> {
+        Pubkey::try_from(v.as_slice())
     }
 }
 
