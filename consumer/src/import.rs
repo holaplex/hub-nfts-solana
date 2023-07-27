@@ -54,9 +54,9 @@ impl Processor {
     async fn process_import(
         &self,
         SolanaNftEventKey {
-            user_id,
+            id,
             project_id,
-            ..
+            user_id,
         }: SolanaNftEventKey,
         CollectionImport { mint_address }: CollectionImport,
     ) -> Result<()> {
@@ -69,13 +69,12 @@ impl Processor {
 
         let collection = rpc.get_asset(&mint_address).await?;
 
-        let collection_model = Collection::find_by_mint(db, collection.id.to_string()).await?;
+        let collection_model = Collection::find_by_id(db, id.parse()?).await?;
         if let Some(collection_model) = collection_model {
             info!(
                 "Deleting already indexed collection: {:?}",
                 collection_model.id
             );
-
             collection_model.delete(db.get()).await?;
         }
 
@@ -130,8 +129,8 @@ impl Processor {
     ) -> Result<collections::Model> {
         let db = &self.db;
         let producer = &self.producer;
-        let owner = collection.ownership.owner.into();
-        let mint = collection.id.into();
+        let owner = collection.ownership.owner.try_into()?;
+        let mint = collection.id.try_into()?;
         let seller_fee_basis_points = collection.royalty.basis_points;
         let metadata = collection.content.metadata;
         let files: Vec<File> = collection
@@ -224,9 +223,8 @@ impl Processor {
         asset: Asset,
     ) -> Result<collection_mints::Model> {
         let producer = self.producer.clone();
-        let owner = asset.ownership.owner.into();
-
-        let mint = asset.id.into();
+        let owner = asset.ownership.owner.try_into()?;
+        let mint = asset.id.try_into()?;
         let ata = get_associated_token_address(&owner, &mint);
         let seller_fee_basis_points = asset.royalty.basis_points;
         let metadata = asset.content.metadata;
