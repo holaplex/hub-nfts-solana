@@ -168,6 +168,11 @@ pub struct Metadata {
     pub description: Option<String>,
     pub name: String,
     pub symbol: Option<String>,
+    pub image: Option<String>,
+    pub external_url: Option<String>,
+    pub animation_url: Option<String>,
+    #[serde(flatten)]
+    extra: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
