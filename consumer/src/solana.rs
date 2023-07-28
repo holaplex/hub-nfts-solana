@@ -714,9 +714,13 @@ impl<'a> TransferBackend<compression_leafs::Model, TransferCompressedMintV1Addre
             program_id: mpl_bubblegum::ID,
             accounts,
             data: mpl_bubblegum::instruction::Transfer {
-                root: root.try_into()?,
-                data_hash,
-                creator_hash,
+                root: root.try_into().map_err(|_| anyhow!("Invalid root hash"))?,
+                data_hash: data_hash
+                    .try_into()
+                    .map_err(|_| anyhow!("Invalid data hash"))?,
+                creator_hash: creator_hash
+                    .try_into()
+                    .map_err(|_| anyhow!("Invalid creator hash"))?,
                 nonce: leaf_id,
                 index: leaf_id,
             }
