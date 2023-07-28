@@ -43,6 +43,11 @@ pub struct MintCompressedMintV1Addresses {
     pub leaf_owner: Pubkey,
 }
 
+pub struct TransferCompressedMintV1Addresses {
+    pub owner: Pubkey,
+    pub recipient: Pubkey,
+}
+
 #[derive(Clone)]
 pub struct UpdateMasterEditionAddresses {
     pub metadata: Pubkey,
@@ -103,10 +108,10 @@ pub trait MintBackend<T, R> {
 }
 
 #[async_trait]
-pub trait TransferBackend {
+pub trait TransferBackend<M, R> {
     async fn transfer(
         &self,
-        collection_mint: &collection_mints::Model,
+        collection_mint: &M,
         txn: TransferMetaplexAssetTransaction,
-    ) -> Result<TransactionResponse<TransferAssetAddresses>>;
+    ) -> Result<TransactionResponse<R>>;
 }
