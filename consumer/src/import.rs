@@ -9,14 +9,20 @@ use holaplex_hub_nfts_solana_core::{
     Collection, Services,
 };
 use holaplex_hub_nfts_solana_entity::{collection_mints, collections, prelude::CollectionMints};
-use hub_core::{chrono::Utc, prelude::*, producer::Producer, util::DebugShim, uuid::Uuid};
+use hub_core::{
+    chrono::Utc, futures_util::stream, prelude::*, producer::Producer, reqwest, util::DebugShim,
+    uuid::Uuid,
+};
 use mpl_token_metadata::pda::{find_master_edition_account, find_metadata_account};
 use spl_associated_token_account::get_associated_token_address;
+use tokio_retry::{strategy::ExponentialBackoff, Retry};
 
 use crate::{
     asset_api::{self, Asset, RpcClient},
     solana::Solana,
 };
+
+const CONCURRENT_REQUESTS: usize = 64;
 
 // TODO: could this just be a newtype over events::Processor?
 #[derive(Debug, Clone)]
@@ -70,6 +76,7 @@ impl Processor {
         let collection = rpc.get_asset(&mint_address).await?;
 
         let collection_model = Collection::find_by_id(db, id.parse()?).await?;
+
         if let Some(collection_model) = collection_model {
             info!(
                 "Deleting already indexed collection: {:?}",
@@ -90,6 +97,7 @@ impl Processor {
                 .await?;
 
             let mut mints: Vec<collection_mints::ActiveModel> = Vec::new();
+            let mut futures = Vec::new();
 
             for asset in result.items {
                 let project_id = project_id.clone();
@@ -101,11 +109,21 @@ impl Processor {
                 }
 
                 info!("Importing mint: {:?}", asset.id.to_string());
-                let model = self
-                    .collection_mint_event(project_id, user_id, collection_model.id, asset)
-                    .await?;
 
-                mints.push(model.into());
+                futures.push(self.collection_mint_event(
+                    project_id,
+                    user_id,
+                    collection_model.id,
+                    asset,
+                ));
+            }
+
+            let mut buffered = stream::iter(futures).buffer_unordered(CONCURRENT_REQUESTS);
+            while let Some(result) = buffered.next().await {
+                match result {
+                    Ok(model) => mints.push(model),
+                    Err(e) => bail!("Error: {}", e),
+                }
             }
 
             CollectionMints::insert_many(mints)
@@ -132,20 +150,19 @@ impl Processor {
         let owner = collection.ownership.owner.try_into()?;
         let mint = collection.id.try_into()?;
         let seller_fee_basis_points = collection.royalty.basis_points;
-        let metadata = collection.content.metadata;
+
+        let json_uri = collection.content.json_uri.clone();
+        let json_metadata = Self::get_metadata_json(json_uri.clone()).await?;
+
         let files: Vec<File> = collection
             .content
             .files
             .map(|fs| fs.iter().map(Into::into).collect())
             .unwrap_or_default();
 
-        let image = files
-            .iter()
-            .find(|f| f.mime.as_ref().map_or(false, |m| m.contains("image")))
-            .map(|f| f.uri.clone())
-            .unwrap_or_default();
+        let image = json_metadata.image.unwrap_or_default();
 
-        let attributes = metadata
+        let attributes = json_metadata
             .attributes
             .clone()
             .map(|attributes| attributes.iter().map(Into::into).collect::<Vec<_>>())
@@ -192,9 +209,9 @@ impl Processor {
                             seller_fee_basis_points,
                             creators,
                             metadata: Some(Metadata {
-                                name: metadata.name,
-                                description: metadata.description,
-                                symbol: metadata.symbol.unwrap_or_default(),
+                                name: json_metadata.name,
+                                description: json_metadata.description,
+                                symbol: json_metadata.symbol.unwrap_or_default(),
                                 attributes,
                                 uri: collection.content.json_uri,
                                 image,
@@ -215,19 +232,36 @@ impl Processor {
         Ok(collection_model)
     }
 
+    async fn get_metadata_json(uri: String) -> Result<asset_api::Metadata> {
+        let json_metadata_fut = || async {
+            reqwest::get(uri.clone())
+                .await?
+                .json::<asset_api::Metadata>()
+                .await
+        };
+
+        let json_metadata = Retry::spawn(
+            ExponentialBackoff::from_millis(20).take(10),
+            json_metadata_fut,
+        )
+        .await?;
+
+        Ok(json_metadata)
+    }
+
     async fn collection_mint_event(
         &self,
         project_id: String,
         user_id: String,
         collection: Uuid,
         asset: Asset,
-    ) -> Result<collection_mints::Model> {
+    ) -> Result<collection_mints::ActiveModel> {
         let producer = self.producer.clone();
         let owner = asset.ownership.owner.try_into()?;
         let mint = asset.id.try_into()?;
         let ata = get_associated_token_address(&owner, &mint);
         let seller_fee_basis_points = asset.royalty.basis_points;
-        let metadata = asset.content.metadata;
+
         let update_authority = asset
             .authorities
             .get(0)
@@ -235,21 +269,20 @@ impl Processor {
             .address
             .clone();
 
-        let files = asset
+        let json_metadata = Self::get_metadata_json(asset.content.json_uri.clone()).await?;
+
+        let files: Vec<File> = asset
             .content
             .files
-            .map(|fs| fs.iter().map(Into::into).collect::<Vec<File>>())
+            .map(|fs| fs.iter().map(Into::into).collect())
             .unwrap_or_default();
 
-        let image = files
-            .iter()
-            .find(|f| f.mime.as_ref().map_or(false, |m| m.contains("image")))
-            .map(|f| f.uri.clone())
-            .unwrap_or_default();
+        let image = json_metadata.image.unwrap_or_default();
 
-        let attributes = metadata
+        let attributes = json_metadata
             .attributes
-            .map(|attributes| attributes.iter().map(Into::into).collect())
+            .clone()
+            .map(|attributes| attributes.iter().map(Into::into).collect::<Vec<_>>())
             .unwrap_or_default();
 
         let creators = asset
@@ -285,9 +318,9 @@ impl Processor {
                         compressed: asset.compression.compressed,
                         creators,
                         metadata: Some(Metadata {
-                            name: metadata.name,
-                            description: metadata.description,
-                            symbol: metadata.symbol.unwrap_or_default(),
+                            name: json_metadata.name,
+                            description: json_metadata.description,
+                            symbol: json_metadata.symbol.unwrap_or_default(),
                             attributes,
                             uri: asset.content.json_uri,
                             image,
@@ -304,7 +337,7 @@ impl Processor {
             )
             .await?;
 
-        Ok(mint_model)
+        Ok(mint_model.into())
     }
 }
 
