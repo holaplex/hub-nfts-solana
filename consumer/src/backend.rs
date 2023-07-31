@@ -1,7 +1,8 @@
 use holaplex_hub_nfts_solana_core::proto::{
-    MetaplexMasterEditionTransaction, SolanaPendingTransaction, TransferMetaplexAssetTransaction,
+    MetaplexMasterEditionTransaction, MintMetaplexMetadataTransaction, SolanaPendingTransaction,
+    TransferMetaplexAssetTransaction,
 };
-use holaplex_hub_nfts_solana_entity::collections;
+use holaplex_hub_nfts_solana_entity::{collections, collection_mints};
 use hub_core::prelude::*;
 use solana_program::pubkey::Pubkey;
 
@@ -55,6 +56,12 @@ pub struct UpdateMasterEditionAddresses {
 }
 
 #[derive(Clone)]
+pub struct UpdateCollectionMintAddresses {
+    pub metadata: Pubkey,
+    pub update_authority: Pubkey,
+}
+
+#[derive(Clone)]
 pub struct TransferAssetAddresses {
     pub owner: Pubkey,
     pub recipient: Pubkey,
@@ -101,6 +108,13 @@ pub trait CollectionBackend {
         collection: &collections::Model,
         txn: MetaplexMasterEditionTransaction,
     ) -> Result<TransactionResponse<UpdateMasterEditionAddresses>>;
+
+    fn update_mint(
+        &self,
+        collection: &collections::Model,
+        mint: &collection_mints::Model,
+        txn: MintMetaplexMetadataTransaction,
+    ) -> Result<TransactionResponse<UpdateCollectionMintAddresses>>;
 }
 
 pub trait MintBackend<T, R> {

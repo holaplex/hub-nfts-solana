@@ -4,11 +4,12 @@ use holaplex_hub_nfts_solana_core::{
         nft_events::Event as NftEvent,
         solana_nft_events::Event as SolanaNftEvent,
         treasury_events::{Event as TreasuryEvent, SolanaTransactionResult, TransactionStatus},
-        MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction,
-        MintMetaplexMetadataTransaction, SolanaCompletedMintTransaction,
-        SolanaCompletedTransferTransaction, SolanaCompletedUpdateTransaction,
-        SolanaFailedTransaction, SolanaNftEventKey, SolanaNftEvents, SolanaPendingTransaction,
-        SolanaTransactionFailureReason, TransferMetaplexAssetTransaction,
+        MetaplexMasterEditionTransaction,
+        MintMetaplexEditionTransaction, MintMetaplexMetadataTransaction,
+        SolanaCompletedMintTransaction, SolanaCompletedTransferTransaction,
+        SolanaCompletedUpdateTransaction, SolanaFailedTransaction, SolanaNftEventKey,
+        SolanaNftEvents, SolanaPendingTransaction, SolanaTransactionFailureReason,
+        TransferMetaplexAssetTransaction,
     },
     sea_orm::{DatabaseConnection, DbErr, Set},
     Collection, CollectionMint, CompressionLeaf, Services,
@@ -109,6 +110,7 @@ pub enum EventKind {
     UpdateCollection,
     MintToCollection,
     RetryMintToCollection,
+    UpdateCollectionMint,
 }
 
 impl EventKind {
@@ -125,6 +127,7 @@ impl EventKind {
             Self::UpdateCollection => "collection update",
             Self::MintToCollection => "mint to collection",
             Self::RetryMintToCollection => "mint to collection retry",
+            Self::UpdateCollectionMint => "collection mint update",
         }
     }
 
@@ -144,6 +147,9 @@ impl EventKind {
             EventKind::MintToCollection => SolanaNftEvent::MintToCollectionSigningRequested(tx),
             EventKind::RetryMintToCollection => {
                 SolanaNftEvent::RetryMintToCollectionSigningRequested(tx)
+            },
+            EventKind::UpdateCollectionMint => {
+                SolanaNftEvent::UpdateCollectionMintSigningRequested(tx)
             },
         }
     }
@@ -286,6 +292,11 @@ impl EventKind {
                     address: collection_mint.mint,
                 })
             },
+            Self::UpdateCollectionMint => {
+                SolanaNftEvent::UpdateCollectionMintSubmitted(SolanaCompletedUpdateTransaction {
+                    signature,
+                })
+            },
         })
     }
 
@@ -302,6 +313,7 @@ impl EventKind {
             Self::UpdateCollection => SolanaNftEvent::UpdateCollectionFailed(tx),
             Self::MintToCollection => SolanaNftEvent::MintToCollectionFailed(tx),
             Self::RetryMintToCollection => SolanaNftEvent::RetryMintToCollectionFailed(tx),
+            Self::UpdateCollectionMint => SolanaNftEvent::UpdateCollectionMintFailed(tx),
         }
     }
 }
@@ -428,6 +440,18 @@ impl Processor {
                             EventKind::RetryMintToCollection,
                             &key,
                             self.retry_mint_to_collection(
+                                &UncompressedRef(self.solana()),
+                                &key,
+                                payload,
+                            ),
+                        )
+                        .await
+                    },
+                    Some(NftEvent::SolanaUpdateCollectionMint(payload)) => {
+                        self.process_nft(
+                            EventKind::UpdateCollectionMint,
+                            &key,
+                            self.update_collection_mint(
                                 &UncompressedRef(self.solana()),
                                 &key,
                                 payload,
@@ -735,7 +759,28 @@ impl Processor {
         Ok(tx.into())
     }
 
-    async fn transfer_asset(
+    async fn update_collection_mint<B: CollectionBackend>(
+        &self,
+        backend: &B,
+        key: &SolanaNftEventKey,
+        payload: MintMetaplexMetadataTransaction,
+    ) -> ProcessResult<SolanaPendingTransaction> {
+        let collection_id = Uuid::parse_str(&key.id.clone())?;
+        let collection = Collection::find_by_id(&self.db, collection_id)
+            .await?
+            .ok_or(ProcessorErrorKind::RecordNotFound)?;
+        let mint = CollectionMint::find_by_id(&self.db, collection_id)
+            .await?
+            .ok_or(ProcessorErrorKind::RecordNotFound)?;
+
+        let tx = backend
+            .update_mint(&collection, &mint, payload)
+            .map_err(ProcessorErrorKind::Solana)?;
+
+        Ok(tx.into())
+    }
+
+    async fn transfer_asset (
         &self,
         _key: &SolanaNftEventKey,
         payload: TransferMetaplexAssetTransaction,
