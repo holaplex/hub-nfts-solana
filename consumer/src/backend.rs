@@ -1,7 +1,7 @@
 use holaplex_hub_nfts_solana_core::proto::{
     MetaplexMasterEditionTransaction, SolanaPendingTransaction, TransferMetaplexAssetTransaction,
 };
-use holaplex_hub_nfts_solana_entity::{collection_mints, collections};
+use holaplex_hub_nfts_solana_entity::collections;
 use hub_core::prelude::*;
 use solana_program::pubkey::Pubkey;
 

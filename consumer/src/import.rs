@@ -47,7 +47,7 @@ impl Processor {
                     _ => Ok(None),
                 }
             },
-            _ => Ok(None),
+            Services::Treasury(..) => Ok(None),
         }
     }
 

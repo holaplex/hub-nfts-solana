@@ -5042,6 +5042,7 @@ dependencies = [
 name = "solana-indexer"
 version = "0.1.0"
 dependencies = [
+ "anchor-lang",
  "backoff",
  "bs58 0.5.0",
  "dashmap",
@@ -5050,6 +5051,7 @@ dependencies = [
  "holaplex-hub-core",
  "holaplex-hub-nfts-solana-core",
  "holaplex-hub-nfts-solana-entity",
+ "mpl-bubblegum",
  "sea-orm 0.10.7",
  "solana-client",
  "solana-program",

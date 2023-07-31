@@ -1,7 +1,7 @@
 use core::fmt;
-use hub_core::anyhow::{anyhow, Context, Error};
-use solana_program::pubkey::Pubkey;
 use std::collections::HashMap;
+
+use solana_program::pubkey::Pubkey;
 mod b58 {
     use serde::{de::Visitor, Deserializer, Serializer};
 
@@ -76,7 +76,7 @@ pub struct Asset {
 pub struct AssetSupply {
     pub print_max_supply: u32,
     pub print_current_supply: u32,
-    pub edition_nonce: u64,
+    pub edition_nonce: Option<u64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

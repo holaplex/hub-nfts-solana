@@ -675,7 +675,6 @@ impl Processor {
             mint: tx.addresses.mint.to_string(),
             created_at: Utc::now().naive_utc(),
             associated_token_account: tx.addresses.associated_token_account.to_string(),
-            ..Default::default()
         };
 
         CollectionMint::create(&self.db, collection_mint).await?;

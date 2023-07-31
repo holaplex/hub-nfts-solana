@@ -26,7 +26,6 @@ use solana_sdk::{
 use solana_transaction_status::{UiInnerInstructions, UiInstruction, UiTransactionEncoding};
 use spl_account_compression::{
     events::{AccountCompressionEvent, ChangeLogEventV1},
-    state::ConcurrentMerkleTreeHeader,
     ChangeLogEvent,
 };
 use spl_associated_token_account::{
@@ -38,7 +37,7 @@ use spl_token::{
 };
 
 use crate::{
-    asset_api::{Base58, RpcClient},
+    asset_api::RpcClient,
     backend::{
         CollectionBackend, MasterEditionAddresses, MintBackend, MintCompressedMintV1Addresses,
         MintEditionAddresses, MintMetaplexAddresses, TransactionResponse, TransferAssetAddresses,
@@ -115,6 +114,8 @@ pub enum SolanaAssetIdError {
     Base58(#[from] bs58::decode::Error),
     #[error("Borsh deserialization error")]
     BorshDeserialize(#[from] std::io::Error),
+    #[error("Asset id not found")]
+    NotFound,
 }
 
 #[derive(Clone)]
@@ -136,7 +137,7 @@ impl Solana {
             tree_authority,
             merkle_tree,
         } = args;
-        let rpc_client = Arc::new(RpcClient::new(solana_endpoint));
+        let rpc_client = Arc::new(SolanaRpcClient::new(solana_endpoint));
 
         let (bubblegum_cpi_address, _) = Pubkey::find_program_address(
             &[mpl_bubblegum::state::COLLECTION_CPI_PREFIX.as_bytes()],
@@ -657,7 +658,6 @@ impl<'a> TransferBackend<compression_leafs::Model, TransferCompressedMintV1Addre
         let TransferMetaplexAssetTransaction {
             recipient_address,
             owner_address,
-            collection_mint_id,
             ..
         } = txn;
         let payer = self.0.treasury_wallet_address;
@@ -665,21 +665,20 @@ impl<'a> TransferBackend<compression_leafs::Model, TransferCompressedMintV1Addre
         let owner = owner_address.parse()?;
 
         let asset_api = &self.0.asset_rpc();
-        let solana_rpc = &self.0.rpc();
 
         let tree_authority_address = Pubkey::from_str(&compression_leaf.tree_authority)?;
         let merkle_tree_address = Pubkey::from_str(&compression_leaf.merkle_tree)?;
 
-        let merkle_tree_account_data = solana_rpc.get_account_data(&merkle_tree_address)?;
-        let merkle_tree_account =
-            ConcurrentMerkleTreeHeader::try_from_slice(&merkle_tree_account_data)?;
-
+        let asset_id = compression_leaf
+            .asset_id
+            .clone()
+            .ok_or(SolanaAssetIdError::NotFound)?;
         let asset = asset_api
-            .get_asset(&collection_mint_id)
+            .get_asset(&asset_id)
             .await
             .context("fetching asset from DAA")?;
         let asset_proof = asset_api
-            .get_asset_proof(&collection_mint_id)
+            .get_asset_proof(&asset_id)
             .await
             .context("fetching asset proof from DAA")?;
 
@@ -689,7 +688,7 @@ impl<'a> TransferBackend<compression_leafs::Model, TransferCompressedMintV1Addre
             .compression
             .creator_hash
             .context("no creator hash")?
-            .into()?;
+            .into();
         let leaf_id = asset.compression.leaf_id;
         let proofs = asset_proof
             .proof
@@ -721,7 +720,7 @@ impl<'a> TransferBackend<compression_leafs::Model, TransferCompressedMintV1Addre
                 creator_hash: creator_hash
                     .try_into()
                     .map_err(|_| anyhow!("Invalid creator hash"))?,
-                nonce: leaf_id,
+                nonce: leaf_id.into(),
                 index: leaf_id,
             }
             .data(),
