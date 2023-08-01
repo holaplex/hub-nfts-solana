@@ -38,7 +38,7 @@ impl GeyserGrpcConnector {
             vote: Some(false),
             failed: Some(false),
             signature: None,
-            account_include: vec![spl_token::ID.to_string()],
+            account_include: vec![spl_token::ID.to_string(), mpl_bubblegum::ID.to_string()],
             account_exclude: Vec::new(),
             account_required: Vec::new(),
         });

@@ -76,7 +76,7 @@ pub struct Asset {
 pub struct AssetSupply {
     pub print_max_supply: u32,
     pub print_current_supply: u32,
-    pub edition_nonce: u64,
+    pub edition_nonce: Option<u64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

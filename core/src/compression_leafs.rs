@@ -20,6 +20,18 @@ impl CompressionLeaf {
         Entity::find().filter(Column::Id.eq(id)).one(conn).await
     }
 
+    pub async fn find_by_asset_id(
+        db: &Connection,
+        address: String,
+    ) -> Result<Option<Model>, DbErr> {
+        let conn = db.get();
+
+        Entity::find()
+            .filter(Column::AssetId.eq(address))
+            .one(conn)
+            .await
+    }
+
     pub async fn update(db: &Connection, model: ActiveModel) -> Result<Model, DbErr> {
         let conn = db.get();
 

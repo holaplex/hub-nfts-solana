@@ -387,7 +387,7 @@ impl Processor {
                         self.process_nft(
                             EventKind::TransferAsset,
                             &key,
-                            self.transfer_asset(&UncompressedRef(self.solana()), &key, payload),
+                            self.transfer_asset(&key, payload),
                         )
                         .await
                     },
@@ -730,19 +730,33 @@ impl Processor {
         Ok(tx.into())
     }
 
-    async fn transfer_asset<B: TransferBackend>(
+    async fn transfer_asset(
         &self,
-        backend: &B,
         _key: &SolanaNftEventKey,
         payload: TransferMetaplexAssetTransaction,
     ) -> ProcessResult<SolanaPendingTransaction> {
         let collection_mint_id = Uuid::parse_str(&payload.collection_mint_id.clone())?;
-        let collection_mint = CollectionMint::find_by_id(&self.db, collection_mint_id)
+        let collection_mint = CollectionMint::find_by_id(&self.db, collection_mint_id).await?;
+
+        if let Some(collection_mint) = collection_mint {
+            let backend = &UncompressedRef(self.solana());
+
+            let tx = backend
+                .transfer(&collection_mint, payload)
+                .await
+                .map_err(ProcessorErrorKind::Solana)?;
+
+            return Ok(tx.into());
+        }
+
+        let compression_leaf = CompressionLeaf::find_by_id(&self.db, collection_mint_id)
             .await?
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
+        let backend = &CompressedRef(self.solana());
+
         let tx = backend
-            .transfer(&collection_mint, payload)
+            .transfer(&compression_leaf, payload)
             .await
             .map_err(ProcessorErrorKind::Solana)?;
 
