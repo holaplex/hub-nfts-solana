@@ -53,7 +53,6 @@ impl CollectionMint {
         let conn = db.get();
 
         Entity::find()
-            .join(JoinType::InnerJoin, Relation::Collections.def())
             .find_also_related(collections::Entity)
             .filter(Column::Id.eq(id))
             .one(conn)
