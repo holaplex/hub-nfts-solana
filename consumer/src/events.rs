@@ -765,11 +765,11 @@ impl Processor {
         key: &SolanaNftEventKey,
         payload: MintMetaplexMetadataTransaction,
     ) -> ProcessResult<SolanaPendingTransaction> {
-        let collection_id = Uuid::parse_str(&key.id.clone())?;
+        let collection_id = Uuid::parse_str(&payload.collection_id)?;
         let collection = Collection::find_by_id(&self.db, collection_id)
             .await?
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
-        let mint = CollectionMint::find_by_id(&self.db, collection_id)
+        let mint = CollectionMint::find_by_id(&self.db, key.id.parse()?)
             .await?
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
 

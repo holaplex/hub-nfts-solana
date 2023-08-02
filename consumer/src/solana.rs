@@ -529,12 +529,12 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
                 uses: None,
             }),
             None,
-            None,
+            Some(true),
         );
 
         let message = solana_program::message::Message::new_with_blockhash(
             &[update_ins],
-            Some(&update_authority),
+            Some(&payer),
             &blockhash,
         );
 
@@ -542,7 +542,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
 
         Ok(TransactionResponse {
             serialized_message,
-            signatures_or_signers_public_keys: vec![update_authority.to_string(), payer.to_string()],
+            signatures_or_signers_public_keys: vec![payer.to_string(), update_authority.to_string()],
             addresses: UpdateCollectionMintAddresses {
                 metadata,
                 update_authority,
