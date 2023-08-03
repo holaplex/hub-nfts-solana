@@ -4,7 +4,7 @@ use holaplex_hub_nfts_solana_core::proto::{
     MetaplexMetadata, MintMetaplexEditionTransaction, MintMetaplexMetadataTransaction,
     TransferMetaplexAssetTransaction,
 };
-use holaplex_hub_nfts_solana_entity::{collection_mints, collections};
+use holaplex_hub_nfts_solana_entity::{collection_mints, collections, compression_leafs};
 use hub_core::{anyhow::Result, clap, prelude::*, thiserror, uuid::Uuid};
 use mpl_bubblegum::state::metaplex_adapter::{
     Collection, Creator as BubblegumCreator, TokenProgramVersion,
@@ -13,7 +13,7 @@ use mpl_token_metadata::{
     instruction::{mint_new_edition_from_master_edition_via_token, update_metadata_accounts_v2},
     state::{Creator, DataV2, EDITION, PREFIX},
 };
-use solana_client::rpc_client::RpcClient;
+use solana_client::rpc_client::RpcClient as SolanaRpcClient;
 use solana_program::{
     instruction::Instruction, program_pack::Pack, pubkey::Pubkey,
     system_instruction::create_account, system_program,
@@ -37,11 +37,11 @@ use spl_token::{
 };
 
 use crate::{
-    asset_api::RpcClient as _,
+    asset_api::RpcClient,
     backend::{
         CollectionBackend, MasterEditionAddresses, MintBackend, MintCompressedMintV1Addresses,
         MintEditionAddresses, MintMetaplexAddresses, TransactionResponse, TransferAssetAddresses,
-        TransferBackend, UpdateMasterEditionAddresses,
+        TransferBackend, TransferCompressedMintV1Addresses, UpdateMasterEditionAddresses,
     },
 };
 
@@ -114,11 +114,13 @@ pub enum SolanaAssetIdError {
     Base58(#[from] bs58::decode::Error),
     #[error("Borsh deserialization error")]
     BorshDeserialize(#[from] std::io::Error),
+    #[error("Asset id not found")]
+    NotFound,
 }
 
 #[derive(Clone)]
 pub struct Solana {
-    rpc_client: Arc<RpcClient>,
+    rpc_client: Arc<SolanaRpcClient>,
     treasury_wallet_address: Pubkey,
     bubblegum_tree_authority: Pubkey,
     bubblegum_merkle_tree: Pubkey,
@@ -135,7 +137,7 @@ impl Solana {
             tree_authority,
             merkle_tree,
         } = args;
-        let rpc_client = Arc::new(RpcClient::new(solana_endpoint));
+        let rpc_client = Arc::new(SolanaRpcClient::new(solana_endpoint));
 
         let (bubblegum_cpi_address, _) = Pubkey::find_program_address(
             &[mpl_bubblegum::state::COLLECTION_CPI_PREFIX.as_bytes()],
@@ -160,7 +162,7 @@ impl Solana {
     }
 
     #[must_use]
-    pub fn rpc(&self) -> Arc<RpcClient> {
+    pub fn rpc(&self) -> Arc<SolanaRpcClient> {
         self.rpc_client.clone()
     }
 
@@ -581,7 +583,7 @@ impl<'a> MintBackend<MintMetaplexEditionTransaction, MintEditionAddresses> for E
 }
 
 #[async_trait]
-impl<'a> TransferBackend for UncompressedRef<'a> {
+impl<'a> TransferBackend<collection_mints::Model, TransferAssetAddresses> for UncompressedRef<'a> {
     async fn transfer(
         &self,
         collection_mint: &collection_mints::Model,
@@ -645,50 +647,81 @@ impl<'a> TransferBackend for UncompressedRef<'a> {
 }
 
 #[async_trait]
-impl<'a> TransferBackend for CompressedRef<'a> {
+impl<'a> TransferBackend<compression_leafs::Model, TransferCompressedMintV1Addresses>
+    for CompressedRef<'a>
+{
     async fn transfer(
         &self,
-        collection_mint: &collection_mints::Model,
+        compression_leaf: &compression_leafs::Model,
         txn: TransferMetaplexAssetTransaction,
-    ) -> hub_core::prelude::Result<TransactionResponse<TransferAssetAddresses>> {
+    ) -> hub_core::prelude::Result<TransactionResponse<TransferCompressedMintV1Addresses>> {
         let TransferMetaplexAssetTransaction {
             recipient_address,
             owner_address,
-            collection_mint_id,
             ..
         } = txn;
         let payer = self.0.treasury_wallet_address;
         let recipient = recipient_address.parse()?;
         let owner = owner_address.parse()?;
 
-        let asset_id = todo!("wait where's the asset address");
-        let asset = self
-            .0
-            .asset_rpc_client
-            .get_asset(asset_id)
+        let asset_api = &self.0.asset_rpc();
+
+        let tree_authority_address = Pubkey::from_str(&compression_leaf.tree_authority)?;
+        let merkle_tree_address = Pubkey::from_str(&compression_leaf.merkle_tree)?;
+
+        let asset_id = compression_leaf
+            .asset_id
+            .clone()
+            .ok_or(SolanaAssetIdError::NotFound)?;
+        let asset = asset_api
+            .get_asset(&asset_id)
             .await
-            .context("Error getting asset data")?;
+            .context("fetching asset from DAA")?;
+        let asset_proof = asset_api
+            .get_asset_proof(&asset_id)
+            .await
+            .context("fetching asset proof from DAA")?;
+
+        let root: Vec<u8> = asset_proof.root.into();
+        let data_hash: Vec<u8> = asset.compression.data_hash.context("no data hash")?.into();
+        let creator_hash: Vec<u8> = asset
+            .compression
+            .creator_hash
+            .context("no creator hash")?
+            .into();
+        let leaf_id = asset.compression.leaf_id;
+        let proofs = asset_proof
+            .proof
+            .into_iter()
+            .map(|proof| Ok(AccountMeta::new_readonly(proof.try_into()?, false)))
+            .collect::<Result<Vec<AccountMeta>>>()?;
+
+        let mut accounts = vec![
+            AccountMeta::new(tree_authority_address, false),
+            AccountMeta::new_readonly(owner, true),
+            AccountMeta::new_readonly(owner, false),
+            AccountMeta::new_readonly(recipient, false),
+            AccountMeta::new(merkle_tree_address, false),
+            AccountMeta::new_readonly(spl_noop::ID, false),
+            AccountMeta::new_readonly(spl_account_compression::ID, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ];
+
+        accounts.extend(proofs);
 
         let instructions = [Instruction {
             program_id: mpl_bubblegum::ID,
-            accounts: [
-                AccountMeta::new(self.0.bubblegum_tree_authority, false),
-                AccountMeta::new_readonly(owner, true),
-                AccountMeta::new_readonly(owner, false),
-                AccountMeta::new_readonly(recipient, false),
-                AccountMeta::new(self.0.bubblegum_merkle_tree, false),
-                AccountMeta::new_readonly(spl_noop::ID, false),
-                AccountMeta::new_readonly(spl_account_compression::ID, false),
-                AccountMeta::new_readonly(system_program::ID, false),
-            ]
-            .into_iter()
-            .collect(),
+            accounts,
             data: mpl_bubblegum::instruction::Transfer {
-                root: todo!("how does DAA work"),
-                data_hash: todo!("how does DAA work"),
-                creator_hash: todo!("how does DAA work"),
-                nonce: todo!("how does DAA work"),
-                index: todo!("how does DAA work"),
+                root: root.try_into().map_err(|_| anyhow!("Invalid root hash"))?,
+                data_hash: data_hash
+                    .try_into()
+                    .map_err(|_| anyhow!("Invalid data hash"))?,
+                creator_hash: creator_hash
+                    .try_into()
+                    .map_err(|_| anyhow!("Invalid creator hash"))?,
+                nonce: leaf_id.into(),
+                index: leaf_id,
             }
             .data(),
         }];
@@ -703,12 +736,7 @@ impl<'a> TransferBackend for CompressedRef<'a> {
         Ok(TransactionResponse {
             serialized_message,
             signatures_or_signers_public_keys: vec![payer.to_string(), owner.to_string()],
-            addresses: TransferAssetAddresses {
-                owner,
-                recipient,
-                recipient_associated_token_account: todo!("what"),
-                owner_associated_token_account: todo!("what"),
-            },
+            addresses: TransferCompressedMintV1Addresses { owner, recipient },
         })
     }
 }

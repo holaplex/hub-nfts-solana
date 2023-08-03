@@ -10,7 +10,7 @@ use holaplex_hub_nfts_solana_core::{
         SolanaFailedTransaction, SolanaNftEventKey, SolanaNftEvents, SolanaPendingTransaction,
         SolanaTransactionFailureReason, TransferMetaplexAssetTransaction,
     },
-    sea_orm::{DbErr, Set},
+    sea_orm::{DatabaseConnection, DbErr, Set},
     Collection, CollectionMint, CompressionLeaf, Services,
 };
 use holaplex_hub_nfts_solana_entity::{collection_mints, collections, compression_leafs};
@@ -117,7 +117,7 @@ impl EventKind {
             Self::CreateDrop => "drop creation",
             Self::MintDrop => "drop mint",
             Self::UpdateDrop => "drop update",
-            Self::TransferAsset => "drop asset transfer",
+            Self::TransferAsset => "asset transfer",
             Self::RetryCreateDrop => "drop creation retry",
             Self::RetryMintDrop => "drop mint retry",
             Self::CreateCollection => "collection creation",
@@ -150,7 +150,7 @@ impl EventKind {
 
     async fn into_success(
         self,
-        db: &db::Connection,
+        conn: &DatabaseConnection,
         solana: &Solana,
         key: &SolanaNftEventKey,
         signature: String,
@@ -160,7 +160,7 @@ impl EventKind {
         Ok(match self {
             Self::CreateDrop => {
                 let id = id()?;
-                let collection = Collection::find_by_id(db, id)
+                let collection = Collection::find_by_id(conn, id)
                     .await?
                     .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
@@ -172,7 +172,7 @@ impl EventKind {
             Self::CreateCollection => {
                 let id = id()?;
 
-                let collection = Collection::find_by_id(db, id)
+                let collection = Collection::find_by_id(conn, id)
                     .await?
                     .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
@@ -184,7 +184,7 @@ impl EventKind {
             Self::RetryCreateCollection => {
                 let id = id()?;
 
-                let collection = Collection::find_by_id(db, id)
+                let collection = Collection::find_by_id(conn, id)
                     .await?
                     .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
@@ -200,9 +200,9 @@ impl EventKind {
             },
             Self::MintToCollection => {
                 let id = id()?;
-                let collection_mint = CollectionMint::find_by_id(db, id).await?;
+                let collection_mint = CollectionMint::find_by_id(conn, id).await?;
 
-                let compression_leafs = CompressionLeaf::find_by_id(db, id).await?;
+                let compression_leafs = CompressionLeaf::find_by_id(conn, id).await?;
 
                 let address = if let Some(compression_leaf) = compression_leafs {
                     let signature = Signature::from_str(&signature)?;
@@ -220,7 +220,7 @@ impl EventKind {
 
                     compression_leaf.asset_id = Set(Some(asset_id.clone()));
 
-                    CompressionLeaf::update(db, compression_leaf).await?;
+                    CompressionLeaf::update(conn, compression_leaf).await?;
 
                     asset_id
                 } else {
@@ -236,7 +236,7 @@ impl EventKind {
             },
             Self::MintDrop => {
                 let id = id()?;
-                let collection_mint = CollectionMint::find_by_id(db, id)
+                let collection_mint = CollectionMint::find_by_id(conn, id)
                     .await?
                     .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
@@ -255,7 +255,7 @@ impl EventKind {
             },
             Self::RetryCreateDrop => {
                 let id = id()?;
-                let collection = Collection::find_by_id(db, id)
+                let collection = Collection::find_by_id(conn, id)
                     .await?
                     .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
@@ -266,7 +266,7 @@ impl EventKind {
             },
             Self::RetryMintDrop => {
                 let id = id()?;
-                let collection_mint = CollectionMint::find_by_id(db, id)
+                let collection_mint = CollectionMint::find_by_id(conn, id)
                     .await?
                     .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
@@ -277,7 +277,7 @@ impl EventKind {
             },
             Self::RetryMintToCollection => {
                 let id = id()?;
-                let collection_mint = CollectionMint::find_by_id(db, id)
+                let collection_mint = CollectionMint::find_by_id(conn, id)
                     .await?
                     .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
@@ -387,7 +387,7 @@ impl Processor {
                         self.process_nft(
                             EventKind::TransferAsset,
                             &key,
-                            self.transfer_asset(&UncompressedRef(self.solana()), &key, payload),
+                            self.transfer_asset(&key, payload),
                         )
                         .await
                     },
@@ -562,10 +562,11 @@ impl Processor {
         key: &SolanaNftEventKey,
         sig: String,
     ) -> ProcessResult<()> {
+        let conn = self.db.get();
         self.producer
             .send(
                 Some(&SolanaNftEvents {
-                    event: Some(kind.into_success(&self.db, self.solana(), key, sig).await?),
+                    event: Some(kind.into_success(conn, self.solana(), key, sig).await?),
                 }),
                 Some(key),
             )
@@ -598,6 +599,7 @@ impl Processor {
         key: &SolanaNftEventKey,
         payload: MetaplexMasterEditionTransaction,
     ) -> ProcessResult<SolanaPendingTransaction> {
+        let conn = self.db.get();
         let tx = backend
             .create(payload.clone())
             .map_err(ProcessorErrorKind::Solana)?;
@@ -623,7 +625,7 @@ impl Processor {
             created_at: Utc::now().naive_utc(),
         };
 
-        Collection::create(&self.db, collection.into()).await?;
+        Collection::create(conn, collection.into()).await?;
 
         Ok(tx.into())
     }
@@ -633,9 +635,10 @@ impl Processor {
         key: &SolanaNftEventKey,
         payload: MintMetaplexMetadataTransaction,
     ) -> ProcessResult<SolanaPendingTransaction> {
+        let conn = self.db.get();
         let id = Uuid::parse_str(&key.id.clone())?;
         let collection_id = Uuid::parse_str(&payload.collection_id)?;
-        let collection = Collection::find_by_id(&self.db, collection_id)
+        let collection = Collection::find_by_id(conn, collection_id)
             .await?
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
@@ -657,7 +660,7 @@ impl Processor {
                 ..Default::default()
             };
 
-            CompressionLeaf::create(&self.db, compression_leaf).await?;
+            CompressionLeaf::create(conn, compression_leaf).await?;
 
             return Ok(tx.into());
         }
@@ -677,7 +680,7 @@ impl Processor {
             associated_token_account: tx.addresses.associated_token_account.to_string(),
         };
 
-        CollectionMint::create(&self.db, collection_mint).await?;
+        CollectionMint::create(conn, collection_mint).await?;
 
         Ok(tx.into())
     }
@@ -688,9 +691,10 @@ impl Processor {
         key: &SolanaNftEventKey,
         payload: MintMetaplexEditionTransaction,
     ) -> ProcessResult<SolanaPendingTransaction> {
+        let conn = self.db.get();
         let id = Uuid::parse_str(&key.id.clone())?;
         let collection_id = Uuid::parse_str(&payload.collection_id)?;
-        let collection = Collection::find_by_id(&self.db, collection_id)
+        let collection = Collection::find_by_id(conn, collection_id)
             .await?
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
@@ -707,7 +711,7 @@ impl Processor {
             created_at: Utc::now().naive_utc(),
         };
 
-        CollectionMint::create(&self.db, collection_mint).await?;
+        CollectionMint::create(conn, collection_mint).await?;
 
         Ok(tx.into())
     }
@@ -718,8 +722,9 @@ impl Processor {
         key: &SolanaNftEventKey,
         payload: MetaplexMasterEditionTransaction,
     ) -> ProcessResult<SolanaPendingTransaction> {
+        let conn = self.db.get();
         let collection_id = Uuid::parse_str(&key.id.clone())?;
-        let collection = Collection::find_by_id(&self.db, collection_id)
+        let collection = Collection::find_by_id(conn, collection_id)
             .await?
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
@@ -730,19 +735,34 @@ impl Processor {
         Ok(tx.into())
     }
 
-    async fn transfer_asset<B: TransferBackend>(
+    async fn transfer_asset(
         &self,
-        backend: &B,
         _key: &SolanaNftEventKey,
         payload: TransferMetaplexAssetTransaction,
     ) -> ProcessResult<SolanaPendingTransaction> {
+        let conn = self.db.get();
         let collection_mint_id = Uuid::parse_str(&payload.collection_mint_id.clone())?;
-        let collection_mint = CollectionMint::find_by_id(&self.db, collection_mint_id)
+        let collection_mint = CollectionMint::find_by_id(conn, collection_mint_id).await?;
+
+        if let Some(collection_mint) = collection_mint {
+            let backend = &UncompressedRef(self.solana());
+
+            let tx = backend
+                .transfer(&collection_mint, payload)
+                .await
+                .map_err(ProcessorErrorKind::Solana)?;
+
+            return Ok(tx.into());
+        }
+
+        let compression_leaf = CompressionLeaf::find_by_id(conn, collection_mint_id)
             .await?
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
+        let backend = &CompressedRef(self.solana());
+
         let tx = backend
-            .transfer(&collection_mint, payload)
+            .transfer(&compression_leaf, payload)
             .await
             .map_err(ProcessorErrorKind::Solana)?;
 
@@ -755,6 +775,7 @@ impl Processor {
         key: &SolanaNftEventKey,
         payload: MetaplexMasterEditionTransaction,
     ) -> ProcessResult<SolanaPendingTransaction> {
+        let conn = self.db.get();
         let tx = backend
             .create(payload.clone())
             .map_err(ProcessorErrorKind::Solana)?;
@@ -769,7 +790,7 @@ impl Processor {
         } = tx.addresses;
 
         let collection_id = Uuid::parse_str(&key.id.clone())?;
-        let collection = Collection::find_by_id(&self.db, collection_id)
+        let collection = Collection::find_by_id(conn, collection_id)
             .await?
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
@@ -782,7 +803,7 @@ impl Processor {
         collection.update_authority = Set(update_authority.to_string());
         collection.owner = Set(owner.to_string());
 
-        Collection::update(&self.db, collection).await?;
+        Collection::update(conn, collection).await?;
 
         Ok(tx.into())
     }
@@ -795,12 +816,12 @@ impl Processor {
         key: &SolanaNftEventKey,
         payload: MintMetaplexEditionTransaction,
     ) -> ProcessResult<SolanaPendingTransaction> {
+        let conn = self.db.get();
         let id = Uuid::parse_str(&key.id.clone())?;
 
-        let (collection_mint, collection) =
-            CollectionMint::find_by_id_with_collection(&self.db, id)
-                .await?
-                .ok_or(ProcessorErrorKind::RecordNotFound)?;
+        let (collection_mint, collection) = CollectionMint::find_by_id_with_collection(conn, id)
+            .await?
+            .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
         let collection = collection.ok_or(ProcessorErrorKind::RecordNotFound)?;
 
@@ -821,7 +842,7 @@ impl Processor {
         collection_mint.owner = Set(recipient.to_string());
         collection_mint.associated_token_account = Set(associated_token_account.to_string());
 
-        CollectionMint::update(&self.db, collection_mint).await?;
+        CollectionMint::update(conn, collection_mint).await?;
 
         Ok(tx.into())
     }
@@ -834,12 +855,12 @@ impl Processor {
         key: &SolanaNftEventKey,
         payload: MintMetaplexMetadataTransaction,
     ) -> ProcessResult<SolanaPendingTransaction> {
+        let conn = self.db.get();
         let id = Uuid::parse_str(&key.id.clone())?;
 
-        let (collection_mint, collection) =
-            CollectionMint::find_by_id_with_collection(&self.db, id)
-                .await?
-                .ok_or(ProcessorErrorKind::RecordNotFound)?;
+        let (collection_mint, collection) = CollectionMint::find_by_id_with_collection(conn, id)
+            .await?
+            .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
         let collection = collection.ok_or(ProcessorErrorKind::RecordNotFound)?;
 
@@ -860,7 +881,7 @@ impl Processor {
         collection_mint.owner = Set(recipient.to_string());
         collection_mint.associated_token_account = Set(associated_token_account.to_string());
 
-        CollectionMint::update(&self.db, collection_mint).await?;
+        CollectionMint::update(conn, collection_mint).await?;
 
         Ok(tx.into())
     }

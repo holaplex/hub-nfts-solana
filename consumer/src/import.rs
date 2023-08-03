@@ -53,7 +53,7 @@ impl Processor {
                     _ => Ok(None),
                 }
             },
-            _ => Ok(None),
+            Services::Treasury(..) => Ok(None),
         }
     }
 
@@ -69,20 +69,20 @@ impl Processor {
         const MAX_LIMIT: u64 = 1000;
 
         let rpc = &self.solana.0.asset_rpc();
-        let db = &self.db;
+        let conn = self.db.get();
 
         let mut page = 1;
 
         let collection = rpc.get_asset(&mint_address).await?;
 
-        let collection_model = Collection::find_by_id(db, id.parse()?).await?;
+        let collection_model = Collection::find_by_id(conn, id.parse()?).await?;
 
         if let Some(collection_model) = collection_model {
             info!(
                 "Deleting already indexed collection: {:?}",
                 collection_model.id
             );
-            collection_model.delete(db.get()).await?;
+            collection_model.delete(conn).await?;
         }
 
         info!("Importing collection: {:?}", collection.id.to_string());
@@ -126,9 +126,7 @@ impl Processor {
                 }
             }
 
-            CollectionMints::insert_many(mints)
-                .exec(self.db.get())
-                .await?;
+            CollectionMints::insert_many(mints).exec(conn).await?;
 
             if result.total < MAX_LIMIT {
                 break;
@@ -145,7 +143,7 @@ impl Processor {
         user_id: String,
         collection: Asset,
     ) -> Result<collections::Model> {
-        let db = &self.db;
+        let conn = self.db.get();
         let producer = &self.producer;
         let owner = collection.ownership.owner.try_into()?;
         let mint = collection.id.try_into()?;
@@ -188,7 +186,7 @@ impl Processor {
         let (metadata_pubkey, _) = find_metadata_account(&mint);
 
         let (master_edition, _) = find_master_edition_account(&mint);
-        let collection_model = Collection::create(db, collections::ActiveModel {
+        let collection_model = Collection::create(conn, collections::ActiveModel {
             master_edition: Set(master_edition.to_string()),
             update_authority: Set(update_authority.to_string()),
             associated_token_account: Set(ata.to_string()),

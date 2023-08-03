@@ -1,7 +1,7 @@
 use holaplex_hub_nfts_solana_core::proto::{
     MetaplexMasterEditionTransaction, SolanaPendingTransaction, TransferMetaplexAssetTransaction,
 };
-use holaplex_hub_nfts_solana_entity::{collection_mints, collections};
+use holaplex_hub_nfts_solana_entity::collections;
 use hub_core::prelude::*;
 use solana_program::pubkey::Pubkey;
 
@@ -41,6 +41,11 @@ pub struct MintCompressedMintV1Addresses {
     pub tree_authority: Pubkey,
     pub tree_delegate: Pubkey,
     pub leaf_owner: Pubkey,
+}
+
+pub struct TransferCompressedMintV1Addresses {
+    pub owner: Pubkey,
+    pub recipient: Pubkey,
 }
 
 #[derive(Clone)]
@@ -103,10 +108,10 @@ pub trait MintBackend<T, R> {
 }
 
 #[async_trait]
-pub trait TransferBackend {
+pub trait TransferBackend<M, R> {
     async fn transfer(
         &self,
-        collection_mint: &collection_mints::Model,
+        collection_mint: &M,
         txn: TransferMetaplexAssetTransaction,
-    ) -> Result<TransactionResponse<TransferAssetAddresses>>;
+    ) -> Result<TransactionResponse<R>>;
 }

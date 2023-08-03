@@ -1,5 +1,6 @@
 use std::{convert::TryInto, sync::Arc};
 
+use anchor_lang::AnchorDeserialize;
 use backoff::ExponentialBackoff;
 use dashmap::DashMap;
 use futures::{sink::SinkExt, stream::StreamExt};
@@ -9,16 +10,21 @@ use holaplex_hub_nfts_solana_core::{
         solana_nft_events::Event::UpdateMintOwner, MintOwnershipUpdate, SolanaNftEventKey,
         SolanaNftEvents,
     },
-    CollectionMint,
+    sea_orm::Set,
+    CollectionMint, CompressionLeaf,
 };
+use holaplex_hub_nfts_solana_entity::compression_leafs;
 use hub_core::{prelude::*, producer::Producer, tokio::task};
+use mpl_bubblegum::utils::get_asset_id;
 use solana_client::rpc_client::RpcClient;
 use solana_program::program_pack::Pack;
 use solana_sdk::{pubkey::Pubkey, signature::Signature};
 use spl_token::{instruction::TokenInstruction, state::Account};
 use yellowstone_grpc_client::GeyserGrpcClientError;
 use yellowstone_grpc_proto::{
-    prelude::{subscribe_update::UpdateOneof, SubscribeUpdate, SubscribeUpdateTransaction},
+    prelude::{
+        subscribe_update::UpdateOneof, Message, SubscribeUpdate, SubscribeUpdateTransaction,
+    },
     tonic::Status,
 };
 
@@ -106,23 +112,105 @@ impl MessageHandler {
             .context("Transaction not found")?
             .message
             .context("Message not found")?;
+        let sig = tx
+            .transaction
+            .as_ref()
+            .ok_or_else(|| anyhow!("failed to get transaction"))?
+            .signature
+            .clone();
 
-        let mut i = 0;
         let keys = message.clone().account_keys;
 
         for (idx, key) in message.clone().account_keys.iter().enumerate() {
-            let k = Pubkey::new(key);
+            let key: &[u8] = key;
+            let k = Pubkey::try_from(key)?;
             if k == spl_token::ID {
-                i = idx;
-                break;
+                self.process_spl_token_transaction(idx, &keys, &sig, &message)
+                    .await?;
+            } else if k == mpl_bubblegum::ID {
+                self.process_mpl_bubblegum_transaction(idx, &keys, &sig, &message)
+                    .await?;
             }
         }
 
+        Ok(())
+    }
+
+    async fn process_mpl_bubblegum_transaction(
+        &self,
+        program_account_index: usize,
+        keys: &[Vec<u8>],
+        sig: &Vec<u8>,
+        message: &Message,
+    ) -> Result<()> {
         for ins in message.instructions.iter() {
             let account_indices = ins.accounts.clone();
             let program_idx: usize = ins.program_id_index.try_into()?;
 
-            if program_idx == i {
+            if program_idx == program_account_index {
+                let conn = self.db.get();
+                let data = ins.data.clone();
+                let data = data.as_slice();
+
+                let tkn_instruction =
+                    mpl_bubblegum::instruction::Transfer::try_from_slice(&data[8..])?;
+                let new_leaf_owner_account_index = account_indices[3];
+                let merkle_tree_account_index = account_indices[4];
+                let new_leaf_owner_bytes: &[u8] = &keys[new_leaf_owner_account_index as usize];
+                let merkle_tree_bytes: &[u8] = &keys[merkle_tree_account_index as usize];
+                let new_leaf_owner = Pubkey::try_from(new_leaf_owner_bytes)?;
+                let merkle_tree = Pubkey::try_from(merkle_tree_bytes)?;
+
+                let asset_id = get_asset_id(&merkle_tree, tkn_instruction.nonce);
+
+                let compression_leaf =
+                    CompressionLeaf::find_by_asset_id(conn, asset_id.to_string())
+                        .await?
+                        .context("compression leaf not found")?;
+
+                let collection_mint_id = compression_leaf.id;
+                let leaf_owner = compression_leaf.leaf_owner.clone();
+                let mut compression_leaf: compression_leafs::ActiveModel = compression_leaf.into();
+
+                compression_leaf.leaf_owner = Set(new_leaf_owner.to_string());
+
+                CompressionLeaf::update(conn, compression_leaf).await?;
+
+                self.producer
+                    .send(
+                        Some(&SolanaNftEvents {
+                            event: Some(UpdateMintOwner(MintOwnershipUpdate {
+                                mint_address: asset_id.to_string(),
+                                sender: leaf_owner,
+                                recipient: new_leaf_owner.to_string(),
+                                tx_signature: Signature::new(sig.as_slice()).to_string(),
+                            })),
+                        }),
+                        Some(&SolanaNftEventKey {
+                            id: collection_mint_id.to_string(),
+                            ..Default::default()
+                        }),
+                    )
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn process_spl_token_transaction(
+        &self,
+        program_account_index: usize,
+        keys: &[Vec<u8>],
+        sig: &Vec<u8>,
+        message: &Message,
+    ) -> Result<()> {
+        let conn = self.db.get();
+        for ins in message.instructions.iter() {
+            let account_indices = ins.accounts.clone();
+            let program_idx: usize = ins.program_id_index.try_into()?;
+
+            if program_idx == program_account_index {
                 let data = ins.data.clone();
                 let data = data.as_slice();
                 let tkn_instruction = spl_token::instruction::TokenInstruction::unpack(data)?;
@@ -138,27 +226,20 @@ impl MessageHandler {
                 }
 
                 if let Some((1, destination_ata_index)) = transfer_info {
-                    let sig = tx
-                        .transaction
-                        .as_ref()
-                        .ok_or_else(|| anyhow!("failed to get transaction"))?
-                        .signature
-                        .clone();
-
                     let source_account_index = account_indices[0];
-                    let source_bytes = &keys[source_account_index as usize];
-                    let source = Pubkey::new(source_bytes);
+                    let source_bytes: &[u8] = &keys[source_account_index as usize];
+                    let source = Pubkey::try_from(source_bytes)?;
 
                     let collection_mint =
-                        CollectionMint::find_by_ata(&self.db, source.to_string()).await?;
+                        CollectionMint::find_by_ata(conn, source.to_string()).await?;
 
                     if collection_mint.is_none() {
                         return Ok(());
                     }
 
                     let destination_account_index = account_indices[destination_ata_index];
-                    let destination_bytes = &keys[destination_account_index as usize];
-                    let destination = Pubkey::new(destination_bytes);
+                    let destination_bytes: &[u8] = &keys[destination_account_index as usize];
+                    let destination = Pubkey::try_from(destination_bytes)?;
 
                     let acct = fetch_account(&self.rpc, &destination).await?;
                     let destination_tkn_act = Account::unpack(&acct.data)?;
@@ -166,7 +247,7 @@ impl MessageHandler {
                     let mint = collection_mint.context("No mint found")?;
 
                     CollectionMint::update_owner_and_ata(
-                        &self.db,
+                        conn,
                         &mint,
                         new_owner.clone(),
                         destination.to_string(),
