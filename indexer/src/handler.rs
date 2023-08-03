@@ -148,7 +148,7 @@ impl MessageHandler {
             let program_idx: usize = ins.program_id_index.try_into()?;
 
             if program_idx == program_account_index {
-                let conn = &self.db;
+                let conn = self.db.get();
                 let data = ins.data.clone();
                 let data = data.as_slice();
 
@@ -205,6 +205,7 @@ impl MessageHandler {
         sig: &Vec<u8>,
         message: &Message,
     ) -> Result<()> {
+        let conn = self.db.get();
         for ins in message.instructions.iter() {
             let account_indices = ins.accounts.clone();
             let program_idx: usize = ins.program_id_index.try_into()?;
@@ -230,7 +231,7 @@ impl MessageHandler {
                     let source = Pubkey::try_from(source_bytes)?;
 
                     let collection_mint =
-                        CollectionMint::find_by_ata(&self.db, source.to_string()).await?;
+                        CollectionMint::find_by_ata(conn, source.to_string()).await?;
 
                     if collection_mint.is_none() {
                         return Ok(());
@@ -246,7 +247,7 @@ impl MessageHandler {
                     let mint = collection_mint.context("No mint found")?;
 
                     CollectionMint::update_owner_and_ata(
-                        &self.db,
+                        conn,
                         &mint,
                         new_owner.clone(),
                         destination.to_string(),
