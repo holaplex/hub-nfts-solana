@@ -1,10 +1,9 @@
 use anchor_lang::{prelude::AccountMeta, AnchorDeserialize, InstructionData};
-use holaplex_hub_nfts_solana_core::
-    proto::{
-        treasury_events::SolanaTransactionResult, MasterEdition, MetaplexMasterEditionTransaction,
-        MetaplexMetadata, MintMetaplexEditionTransaction, MintMetaplexMetadataTransaction,
-        TransferMetaplexAssetTransaction,
-    };
+use holaplex_hub_nfts_solana_core::proto::{
+    treasury_events::SolanaTransactionResult, MasterEdition, MetaplexMasterEditionTransaction,
+    MetaplexMetadata, MintMetaplexEditionTransaction, MintMetaplexMetadataTransaction,
+    TransferMetaplexAssetTransaction, UpdateSolanaMintPayload,
+};
 use holaplex_hub_nfts_solana_entity::{collection_mints, collections, compression_leafs};
 use hub_core::{anyhow::Result, clap, prelude::*, thiserror, uuid::Uuid};
 use mpl_bubblegum::state::metaplex_adapter::{
@@ -42,7 +41,8 @@ use crate::{
     backend::{
         CollectionBackend, MasterEditionAddresses, MintBackend, MintCompressedMintV1Addresses,
         MintEditionAddresses, MintMetaplexAddresses, TransactionResponse, TransferAssetAddresses,
-        TransferBackend, TransferCompressedMintV1Addresses, UpdateMasterEditionAddresses, UpdateCollectionMintAddresses,
+        TransferBackend, TransferCompressedMintV1Addresses, UpdateCollectionMintAddresses,
+        UpdateMasterEditionAddresses,
     },
 };
 
@@ -474,13 +474,11 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
         &self,
         collection: &collections::Model,
         collection_mint: &collection_mints::Model,
-        txn: MintMetaplexMetadataTransaction,
+        payload: UpdateSolanaMintPayload,
     ) -> Result<TransactionResponse<UpdateCollectionMintAddresses>> {
-        let MintMetaplexMetadataTransaction {
-            metadata,
-            ..
-        } = txn;
-        let metadata = metadata.ok_or(SolanaErrorNotFoundMessage::Metadata)?;
+        let metadata = payload
+            .metadata
+            .ok_or(SolanaErrorNotFoundMessage::Metadata)?;
         let payer: Pubkey = self.0.treasury_wallet_address;
         let rpc = &self.0.rpc_client;
 
@@ -542,8 +540,12 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
 
         Ok(TransactionResponse {
             serialized_message,
-            signatures_or_signers_public_keys: vec![payer.to_string(), update_authority.to_string()],
+            signatures_or_signers_public_keys: vec![
+                payer.to_string(),
+                update_authority.to_string(),
+            ],
             addresses: UpdateCollectionMintAddresses {
+                payer,
                 metadata,
                 update_authority,
             },

@@ -4,17 +4,18 @@ use holaplex_hub_nfts_solana_core::{
         nft_events::Event as NftEvent,
         solana_nft_events::Event as SolanaNftEvent,
         treasury_events::{Event as TreasuryEvent, SolanaTransactionResult, TransactionStatus},
-        MetaplexMasterEditionTransaction,
-        MintMetaplexEditionTransaction, MintMetaplexMetadataTransaction,
-        SolanaCompletedMintTransaction, SolanaCompletedTransferTransaction,
-        SolanaCompletedUpdateTransaction, SolanaFailedTransaction, SolanaNftEventKey,
-        SolanaNftEvents, SolanaPendingTransaction, SolanaTransactionFailureReason,
-        TransferMetaplexAssetTransaction,
+        MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction,
+        MintMetaplexMetadataTransaction, SolanaCompletedMintTransaction,
+        SolanaCompletedTransferTransaction, SolanaCompletedUpdateTransaction,
+        SolanaFailedTransaction, SolanaNftEventKey, SolanaNftEvents, SolanaPendingTransaction,
+        SolanaTransactionFailureReason, TransferMetaplexAssetTransaction, UpdateSolanaMintPayload,
     },
-    sea_orm::{DatabaseConnection, DbErr, Set},
+    sea_orm::{ActiveModelTrait, DatabaseConnection, DbErr, Set},
     Collection, CollectionMint, CompressionLeaf, Services,
 };
-use holaplex_hub_nfts_solana_entity::{collection_mints, collections, compression_leafs};
+use holaplex_hub_nfts_solana_entity::{
+    collection_mints, collections, compression_leafs, update_revisions,
+};
 use hub_core::{
     chrono::Utc,
     prelude::*,
@@ -30,7 +31,7 @@ use solana_sdk::signature::Signature;
 use crate::{
     backend::{
         CollectionBackend, MasterEditionAddresses, MintBackend, MintEditionAddresses,
-        MintMetaplexAddresses, TransferBackend,
+        MintMetaplexAddresses, TransferBackend, UpdateCollectionMintAddresses,
     },
     solana::{CompressedRef, EditionRef, Solana, SolanaAssetIdError, UncompressedRef},
 };
@@ -447,7 +448,7 @@ impl Processor {
                         )
                         .await
                     },
-                    Some(NftEvent::SolanaUpdateCollectionMint(payload)) => {
+                    Some(NftEvent::SolanaUpdatedCollectionMint(payload)) => {
                         self.process_nft(
                             EventKind::UpdateCollectionMint,
                             &key,
@@ -763,13 +764,13 @@ impl Processor {
         &self,
         backend: &B,
         key: &SolanaNftEventKey,
-        payload: MintMetaplexMetadataTransaction,
+        payload: UpdateSolanaMintPayload,
     ) -> ProcessResult<SolanaPendingTransaction> {
         let collection_id = Uuid::parse_str(&payload.collection_id)?;
-        let collection = Collection::find_by_id(&self.db, collection_id)
+        let collection = Collection::find_by_id(&self.db.get(), collection_id)
             .await?
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
-        let mint = CollectionMint::find_by_id(&self.db, key.id.parse()?)
+        let mint = CollectionMint::find_by_id(&self.db.get(), key.id.parse()?)
             .await?
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
@@ -777,10 +778,28 @@ impl Processor {
             .update_mint(&collection, &mint, payload)
             .map_err(ProcessorErrorKind::Solana)?;
 
+        let UpdateCollectionMintAddresses {
+            payer,
+            metadata,
+            update_authority,
+        } = tx.addresses.clone();
+        let msg_bytes = tx.serialized_message.clone();
+
+        let revision = update_revisions::ActiveModel {
+            id: Set(key.id.parse()?),
+            mint_id: Set(mint.id),
+            serialized_message: Set(msg_bytes),
+            payer: Set(payer.to_string()),
+            metadata: Set(metadata.to_string()),
+            update_authority: Set(update_authority.to_string()),
+        };
+
+        revision.insert(self.db.get()).await?;
+
         Ok(tx.into())
     }
 
-    async fn transfer_asset (
+    async fn transfer_asset(
         &self,
         _key: &SolanaNftEventKey,
         payload: TransferMetaplexAssetTransaction,

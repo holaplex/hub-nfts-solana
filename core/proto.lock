@@ -1,14 +1,14 @@
 [[schemas]]
 subject = "nfts"
-version = 1
-sha512 = "c4032c35d77a78090c17d230dfae7955577a6172bc60921c4821e76690c89d3f858d2b358ca41e34fc25468f430107d4c1552e4529dc48db61e4f5545a6ef82c"
+version = 24
+sha512 = "e4be4beae6db9911bd5a5ab9d807dc9b0c027dba67bfb5c114cf805edba9f67c758769a7dd9d69d0f692e567fc35001d69d00b9aa59a92b9ef004aba79fbc6b9"
 
 [[schemas]]
 subject = "solana_nfts"
-version = 1
+version = 8
 sha512 = "2a57c4200577f8a6efa36e2c045a5bd3eb0dba11466659a80dd82f5422db4ac119f529d391805d14449b0ffac6048ae789727075882f9b0496dac710e32f4ff5"
 
 [[schemas]]
 subject = "treasury"
-version = 1
+version = 20
 sha512 = "f3ff35aeb4bfa3a76b4cb985c4f2fc4b3dab1d0bb1585d4d720ff2c1087a879b56531efd3ecdebbb0968fae23371ec03aa944eec0ed07c0a3db7d66aa2074e2e"
