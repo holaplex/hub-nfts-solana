@@ -2,7 +2,7 @@ use holaplex_hub_nfts_solana_core::proto::{
     MetaplexMasterEditionTransaction, SolanaPendingTransaction, TransferMetaplexAssetTransaction,
     UpdateSolanaMintPayload,
 };
-use holaplex_hub_nfts_solana_entity::{collection_mints, collections};
+use holaplex_hub_nfts_solana_entity::{collection_mints, collections, update_revisions};
 use hub_core::prelude::*;
 use solana_program::pubkey::Pubkey;
 
@@ -115,6 +115,11 @@ pub trait CollectionBackend {
         collection: &collections::Model,
         mint: &collection_mints::Model,
         txn: UpdateSolanaMintPayload,
+    ) -> Result<TransactionResponse<UpdateCollectionMintAddresses>>;
+
+    fn retry_update_mint(
+        &self,
+        revision: &update_revisions::Model,
     ) -> Result<TransactionResponse<UpdateCollectionMintAddresses>>;
 }
 

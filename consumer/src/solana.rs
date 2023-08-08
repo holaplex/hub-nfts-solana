@@ -4,7 +4,9 @@ use holaplex_hub_nfts_solana_core::proto::{
     MetaplexMetadata, MintMetaplexEditionTransaction, MintMetaplexMetadataTransaction,
     TransferMetaplexAssetTransaction, UpdateSolanaMintPayload,
 };
-use holaplex_hub_nfts_solana_entity::{collection_mints, collections, compression_leafs};
+use holaplex_hub_nfts_solana_entity::{
+    collection_mints, collections, compression_leafs, update_revisions,
+};
 use hub_core::{anyhow::Result, clap, prelude::*, thiserror, uuid::Uuid};
 use mpl_bubblegum::state::metaplex_adapter::{
     Collection, Creator as BubblegumCreator, TokenProgramVersion,
@@ -540,6 +542,36 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
 
         Ok(TransactionResponse {
             serialized_message,
+            signatures_or_signers_public_keys: vec![
+                payer.to_string(),
+                update_authority.to_string(),
+            ],
+            addresses: UpdateCollectionMintAddresses {
+                payer,
+                metadata,
+                update_authority,
+            },
+        })
+    }
+
+    fn retry_update_mint(
+        &self,
+        revision: &update_revisions::Model,
+    ) -> Result<TransactionResponse<UpdateCollectionMintAddresses>> {
+        let rpc = &self.0.rpc_client;
+
+        let update_authority: Pubkey = revision.update_authority.parse()?;
+        let metadata = revision.metadata.parse()?;
+        let payer = Pubkey::from_str(&revision.payer)?;
+
+        let mut message: solana_program::message::Message =
+            bincode::deserialize(&revision.serialized_message)?;
+
+        let blockhash = rpc.get_latest_blockhash()?;
+        message.recent_blockhash = blockhash;
+
+        Ok(TransactionResponse {
+            serialized_message: message.serialize(),
             signatures_or_signers_public_keys: vec![
                 payer.to_string(),
                 update_authority.to_string(),

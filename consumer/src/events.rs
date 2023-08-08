@@ -10,7 +10,7 @@ use holaplex_hub_nfts_solana_core::{
         SolanaFailedTransaction, SolanaNftEventKey, SolanaNftEvents, SolanaPendingTransaction,
         SolanaTransactionFailureReason, TransferMetaplexAssetTransaction, UpdateSolanaMintPayload,
     },
-    sea_orm::{ActiveModelTrait, DatabaseConnection, DbErr, Set},
+    sea_orm::{ActiveModelTrait, DatabaseConnection, DbErr, EntityTrait, Set},
     Collection, CollectionMint, CompressionLeaf, Services,
 };
 use holaplex_hub_nfts_solana_entity::{
@@ -112,6 +112,7 @@ pub enum EventKind {
     MintToCollection,
     RetryMintToCollection,
     UpdateCollectionMint,
+    RetryUpdateCollectionMint,
 }
 
 impl EventKind {
@@ -129,6 +130,7 @@ impl EventKind {
             Self::MintToCollection => "mint to collection",
             Self::RetryMintToCollection => "mint to collection retry",
             Self::UpdateCollectionMint => "collection mint update",
+            Self::RetryUpdateCollectionMint => "collection mint update retry",
         }
     }
 
@@ -151,6 +153,9 @@ impl EventKind {
             },
             EventKind::UpdateCollectionMint => {
                 SolanaNftEvent::UpdateCollectionMintSigningRequested(tx)
+            },
+            EventKind::RetryUpdateCollectionMint => {
+                SolanaNftEvent::RetryUpdateMintSigningRequested(tx)
             },
         }
     }
@@ -298,6 +303,11 @@ impl EventKind {
                     signature,
                 })
             },
+            Self::RetryUpdateCollectionMint => {
+                SolanaNftEvent::RetryUpdateMintSubmitted(SolanaCompletedUpdateTransaction {
+                    signature,
+                })
+            },
         })
     }
 
@@ -315,6 +325,7 @@ impl EventKind {
             Self::MintToCollection => SolanaNftEvent::MintToCollectionFailed(tx),
             Self::RetryMintToCollection => SolanaNftEvent::RetryMintToCollectionFailed(tx),
             Self::UpdateCollectionMint => SolanaNftEvent::UpdateCollectionMintFailed(tx),
+            Self::RetryUpdateCollectionMint => SolanaNftEvent::RetryUpdateMintFailed(tx),
         }
     }
 }
@@ -460,6 +471,17 @@ impl Processor {
                         )
                         .await
                     },
+                    Some(NftEvent::SolanaRetryUpdatedCollectionMint(_)) => {
+                        self.process_nft(
+                            EventKind::RetryUpdateCollectionMint,
+                            &key,
+                            self.retry_update_collection_mint(
+                                &UncompressedRef(self.solana()),
+                                &key,
+                            ),
+                        )
+                        .await
+                    },
                     _ => Ok(()),
                 }
             },
@@ -506,6 +528,14 @@ impl Processor {
                     },
                     Some(TreasuryEvent::SolanaRetryCreateCollectionSigned(res)) => {
                         self.process_treasury(EventKind::RetryCreateCollection, key, res)
+                            .await
+                    },
+                    Some(TreasuryEvent::SolanaUpdateCollectionMintSigned(res)) => {
+                        self.process_treasury(EventKind::UpdateCollectionMint, key, res)
+                            .await
+                    },
+                    Some(TreasuryEvent::SolanaRetryUpdateCollectionMintSigned(res)) => {
+                        self.process_treasury(EventKind::RetryUpdateCollectionMint, key, res)
                             .await
                     },
                     _ => Ok(()),
@@ -767,10 +797,10 @@ impl Processor {
         payload: UpdateSolanaMintPayload,
     ) -> ProcessResult<SolanaPendingTransaction> {
         let collection_id = Uuid::parse_str(&payload.collection_id)?;
-        let collection = Collection::find_by_id(&self.db.get(), collection_id)
+        let collection = Collection::find_by_id(self.db.get(), collection_id)
             .await?
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
-        let mint = CollectionMint::find_by_id(&self.db.get(), key.id.parse()?)
+        let mint = CollectionMint::find_by_id(self.db.get(), key.id.parse()?)
             .await?
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
@@ -795,6 +825,23 @@ impl Processor {
         };
 
         revision.insert(self.db.get()).await?;
+
+        Ok(tx.into())
+    }
+
+    async fn retry_update_collection_mint<B: CollectionBackend>(
+        &self,
+        backend: &B,
+        key: &SolanaNftEventKey,
+    ) -> ProcessResult<SolanaPendingTransaction> {
+        let revision = update_revisions::Entity::find_by_id(Uuid::from_str(&key.id)?)
+            .one(self.db.get())
+            .await?
+            .ok_or(ProcessorErrorKind::RecordNotFound)?;
+
+        let tx = backend
+            .retry_update_mint(&revision)
+            .map_err(ProcessorErrorKind::Solana)?;
 
         Ok(tx.into())
     }
