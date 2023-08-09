@@ -5,17 +5,22 @@ use holaplex_hub_nfts_solana_core::{
         CollectionImport, File, Metadata, SolanaCollectionPayload, SolanaCreator,
         SolanaMintPayload, SolanaNftEventKey, SolanaNftEvents,
     },
-    sea_orm::{EntityTrait, ModelTrait, Set},
+    sea_orm::{DbErr, EntityTrait, ModelTrait, Set},
     Collection, Services,
 };
 use holaplex_hub_nfts_solana_entity::{collection_mints, collections, prelude::CollectionMints};
 use hub_core::{
-    chrono::Utc, futures_util::stream, prelude::*, producer::Producer, reqwest, util::DebugShim,
-    uuid::Uuid,
+    backon::{ExponentialBuilder, Retryable},
+    chrono::Utc,
+    futures_util::stream,
+    prelude::*,
+    producer::{Producer, SendError},
+    reqwest, thiserror,
+    util::DebugShim,
+    uuid::{self, Uuid},
 };
 use mpl_token_metadata::pda::{find_master_edition_account, find_metadata_account};
 use spl_associated_token_account::get_associated_token_address;
-use tokio_retry::{strategy::ExponentialBackoff, Retry};
 
 use crate::{
     asset_api::{self, Asset, RpcClient},
@@ -23,6 +28,29 @@ use crate::{
 };
 
 const CONCURRENT_REQUESTS: usize = 64;
+
+#[derive(Debug, thiserror::Error, Triage)]
+pub enum ProcessorError {
+    #[error("Missing update authority (index 0) on asset")]
+    #[transient]
+    MissingUpdateAuthority,
+
+    #[error("Error fetching metadata JSON")]
+    JsonFetch(#[source] reqwest::Error),
+    #[error("JSONRPC error")]
+    JsonRpc(#[from] jsonrpsee::core::Error),
+    #[error("Invalid UUID")]
+    InvalidUuid(#[from] uuid::Error),
+    #[error("Invalid conversion from byte slice to public key")]
+    #[permanent]
+    InvalidPubkey(#[source] std::array::TryFromSliceError),
+    #[error("Database error")]
+    DbError(#[from] DbErr),
+    #[error("Error sending message")]
+    SendError(#[from] SendError),
+}
+
+type Result<T> = std::result::Result<T, ProcessorError>;
 
 // TODO: could this just be a newtype over events::Processor?
 #[derive(Debug, Clone)]
@@ -119,11 +147,8 @@ impl Processor {
             }
 
             let mut buffered = stream::iter(futures).buffer_unordered(CONCURRENT_REQUESTS);
-            while let Some(result) = buffered.next().await {
-                match result {
-                    Ok(model) => mints.push(model),
-                    Err(e) => bail!("Error: {}", e),
-                }
+            while let Some(model) = buffered.next().await {
+                mints.push(model?);
             }
 
             CollectionMints::insert_many(mints).exec(conn).await?;
@@ -145,8 +170,15 @@ impl Processor {
     ) -> Result<collections::Model> {
         let conn = self.db.get();
         let producer = &self.producer;
-        let owner = collection.ownership.owner.try_into()?;
-        let mint = collection.id.try_into()?;
+        let owner = collection
+            .ownership
+            .owner
+            .try_into()
+            .map_err(ProcessorError::InvalidPubkey)?;
+        let mint = collection
+            .id
+            .try_into()
+            .map_err(ProcessorError::InvalidPubkey)?;
         let seller_fee_basis_points = collection.royalty.basis_points;
 
         let json_uri = collection.content.json_uri.clone();
@@ -179,22 +211,25 @@ impl Processor {
         let update_authority = &collection
             .authorities
             .get(0)
-            .context("Invalid index")?
+            .ok_or(ProcessorError::MissingUpdateAuthority)?
             .address;
 
         let ata = get_associated_token_address(&owner, &mint);
         let (metadata_pubkey, _) = find_metadata_account(&mint);
 
         let (master_edition, _) = find_master_edition_account(&mint);
-        let collection_model = Collection::create(conn, collections::ActiveModel {
-            master_edition: Set(master_edition.to_string()),
-            update_authority: Set(update_authority.to_string()),
-            associated_token_account: Set(ata.to_string()),
-            owner: Set(owner.to_string()),
-            mint: Set(mint.to_string()),
-            metadata: Set(metadata_pubkey.to_string()),
-            ..Default::default()
-        })
+        let collection_model = Collection::create(
+            conn,
+            collections::ActiveModel {
+                master_edition: Set(master_edition.to_string()),
+                update_authority: Set(update_authority.to_string()),
+                associated_token_account: Set(ata.to_string()),
+                owner: Set(owner.to_string()),
+                mint: Set(mint.to_string()),
+                metadata: Set(metadata_pubkey.to_string()),
+                ..Default::default()
+            },
+        )
         .await?;
 
         producer
@@ -231,18 +266,20 @@ impl Processor {
     }
 
     async fn get_metadata_json(uri: String) -> Result<asset_api::Metadata> {
-        let json_metadata_fut = || async {
+        let json_metadata = (|| async {
             reqwest::get(uri.clone())
                 .await?
                 .json::<asset_api::Metadata>()
                 .await
-        };
-
-        let json_metadata = Retry::spawn(
-            ExponentialBackoff::from_millis(20).take(10),
-            json_metadata_fut,
+        })
+        .retry(
+            &ExponentialBuilder::default()
+                .with_jitter()
+                .with_min_delay(Duration::from_millis(200))
+                .with_max_times(10),
         )
-        .await?;
+        .await
+        .map_err(ProcessorError::JsonFetch)?;
 
         Ok(json_metadata)
     }
@@ -255,15 +292,19 @@ impl Processor {
         asset: Asset,
     ) -> Result<collection_mints::ActiveModel> {
         let producer = self.producer.clone();
-        let owner = asset.ownership.owner.try_into()?;
-        let mint = asset.id.try_into()?;
+        let owner = asset
+            .ownership
+            .owner
+            .try_into()
+            .map_err(ProcessorError::InvalidPubkey)?;
+        let mint = asset.id.try_into().map_err(ProcessorError::InvalidPubkey)?;
         let ata = get_associated_token_address(&owner, &mint);
         let seller_fee_basis_points = asset.royalty.basis_points;
 
         let update_authority = asset
             .authorities
             .get(0)
-            .context("Invalid index")?
+            .ok_or(ProcessorError::MissingUpdateAuthority)?
             .address
             .clone();
 

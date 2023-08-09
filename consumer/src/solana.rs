@@ -7,7 +7,7 @@ use holaplex_hub_nfts_solana_core::proto::{
 use holaplex_hub_nfts_solana_entity::{
     collection_mints, collections, compression_leafs, update_revisions,
 };
-use hub_core::{anyhow::Result, clap, prelude::*, thiserror, uuid::Uuid};
+use hub_core::{anyhow::Result, bs58, clap, prelude::*, thiserror, uuid::Uuid};
 use mpl_bubblegum::state::metaplex_adapter::{
     Collection, Creator as BubblegumCreator, TokenProgramVersion,
 };
@@ -103,13 +103,13 @@ enum SolanaErrorNotFoundMessage {
     Metadata,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Triage)]
 pub enum SolanaAssetIdError {
     #[error("The transaction has no meta field")]
     NoTransactionMeta,
-    #[error("no inner instruction found")]
+    #[error("No inner instruction found")]
     NoInnerInstruction,
-    #[error("Solana rpc error")]
+    #[error("Solana RPC error")]
     Rpc(#[from] solana_client::client_error::ClientError),
     #[error("No nonce found in log messages")]
     NoNonce,

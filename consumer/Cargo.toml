@@ -30,14 +30,12 @@ mpl-bubblegum = "0.7.0"
 mpl-token-metadata = "1.8.3"
 holaplex-hub-nfts-solana-core = { path = "../core" }
 holaplex-hub-nfts-solana-entity = { path = "../entity" }
-jsonrpsee = { version = "0.18.2", features = ["macros", "http-client"] }
-bs58 = "0.5.0"
-rand = "0.8.5" 
-tokio-retry = "0.3.0"
+jsonrpsee = { version = "0.19.0", features = ["macros", "http-client"] }
+rand = "0.8.5"
 
 [dependencies.hub-core]
 package = "holaplex-hub-core"
-version = "0.2.0"
+version = "0.5.0"
 git = "https://github.com/holaplex/hub-core"
 branch = "stable"
-features = ["kafka"]
+features = ["jsonrpsee-core", "kafka", "sea-orm", "solana"]
