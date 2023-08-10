@@ -2,6 +2,6 @@
 endpoint = "https://schemas.holaplex.tools"
 
 [schemas]
-nfts = 22
-treasury = 19
-solana_nfts = 7
+nfts = 25
+treasury = 21
+solana_nfts = 9
