@@ -800,7 +800,7 @@ impl Processor {
         let collection = Collection::find_by_id(self.db.get(), collection_id)
             .await?
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
-        let mint = CollectionMint::find_by_id(self.db.get(), key.id.parse()?)
+        let mint = CollectionMint::find_by_id(self.db.get(), payload.mint_id.parse()?)
             .await?
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
