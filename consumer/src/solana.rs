@@ -12,7 +12,11 @@ use mpl_bubblegum::state::metaplex_adapter::{
     Collection, Creator as BubblegumCreator, TokenProgramVersion,
 };
 use mpl_token_metadata::{
-    instruction::{mint_new_edition_from_master_edition_via_token, update_metadata_accounts_v2},
+    instruction::{
+        mint_new_edition_from_master_edition_via_token,
+        set_and_verify_sized_collection_item, unverify_sized_collection_item,
+        update_metadata_accounts_v2,
+    },
     state::{Creator, DataV2, EDITION, PREFIX},
 };
 use solana_client::rpc_client::RpcClient as SolanaRpcClient;
@@ -42,8 +46,9 @@ use crate::{
     asset_api::RpcClient,
     backend::{
         CollectionBackend, MasterEditionAddresses, MintBackend, MintCompressedMintV1Addresses,
-        MintEditionAddresses, MintMetaplexAddresses, TransactionResponse, TransferAssetAddresses,
-        TransferBackend, TransferCompressedMintV1Addresses, UpdateCollectionMintAddresses,
+        MintEditionAddresses, MintMetaplexAddresses, SwitchCollectionAddresses,
+        TransactionResponse, TransferAssetAddresses, TransferBackend,
+        TransferCompressedMintV1Addresses, UpdateCollectionMintAddresses,
         UpdateMasterEditionAddresses,
     },
 };
@@ -580,6 +585,103 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
                 payer,
                 metadata,
                 update_authority,
+            },
+        })
+    }
+
+    fn switch(
+        &self,
+        mint: &collection_mints::Model,
+        collection: &collections::Model,
+        new_collection: &collections::Model,
+    ) -> Result<TransactionResponse<SwitchCollectionAddresses>> {
+        let rpc = &self.0.rpc_client;
+        let payer = self.0.treasury_wallet_address;
+        println!("mint: {:?}", mint);
+        println!("collection: {:?}", collection);
+        println!("new_collection: {:?}", new_collection);
+        let mint_pubkey = Pubkey::from_str(&mint.mint)?;
+        let program_pubkey = mpl_token_metadata::id();
+        let metadata_seeds = &[
+            PREFIX.as_bytes(),
+            program_pubkey.as_ref(),
+            mint_pubkey.as_ref(),
+        ];
+        let (metadata, _) = Pubkey::find_program_address(metadata_seeds, &program_pubkey);
+
+        println!("metadata: {:?}", metadata);
+
+        let collection_authority = collection.owner.parse()?;
+        let collection_mint = Pubkey::from_str(&collection.mint)?;
+        let collection_metadata_seeds = &[
+            PREFIX.as_bytes(),
+            program_pubkey.as_ref(),
+            collection_mint.as_ref(),
+        ];
+        let (collection_metadata, _) =
+            Pubkey::find_program_address(collection_metadata_seeds, &program_pubkey);
+
+        println!("collection_metadata: {:?}", collection_metadata);
+        let collection_master_edition = collection.master_edition.parse()?;
+
+        let unverify_ins = unverify_sized_collection_item(
+            program_pubkey,
+            metadata,
+            collection_authority,
+            payer,
+            collection_mint,
+            collection_metadata,
+            collection_master_edition,
+            None,
+        );
+
+        let new_collection_mint = Pubkey::from_str(&new_collection.mint)?;
+
+        let new_collection_metadata_seeds = &[
+            PREFIX.as_bytes(),
+            program_pubkey.as_ref(),
+            new_collection_mint.as_ref(),
+        ];
+        let (new_collection_metadata, _) =
+            Pubkey::find_program_address(new_collection_metadata_seeds, &program_pubkey);
+        println!("new_collection_metadata: {:?}", new_collection_metadata);
+
+        let new_collection_authority = Pubkey::from_str(&new_collection.owner)?;
+        let new_collection_update_authority = Pubkey::from_str(&new_collection.update_authority)?;
+
+        let verify_ins = set_and_verify_sized_collection_item(
+            program_pubkey,
+            metadata,
+            new_collection_authority,
+            payer,
+            new_collection_update_authority,
+            new_collection.mint.parse()?,
+            new_collection_metadata,
+            new_collection.master_edition.parse()?,
+            None,
+        );
+
+        let instructions = vec![unverify_ins, verify_ins];
+
+        let blockhash = rpc.get_latest_blockhash()?;
+
+        let message = solana_program::message::Message::new_with_blockhash(
+            &instructions,
+            Some(&payer),
+            &blockhash,
+        );
+
+        let serialized_message = message.serialize();
+
+        Ok(TransactionResponse {
+            serialized_message,
+            signatures_or_signers_public_keys: vec![
+                payer.to_string(),
+                collection_authority.to_string(),
+            ],
+            addresses: SwitchCollectionAddresses {
+                payer,
+                new_collection_authority,
             },
         })
     }
