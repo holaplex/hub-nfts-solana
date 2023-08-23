@@ -13,9 +13,8 @@ use mpl_bubblegum::state::metaplex_adapter::{
 };
 use mpl_token_metadata::{
     instruction::{
-        mint_new_edition_from_master_edition_via_token,
-        set_and_verify_sized_collection_item, unverify_sized_collection_item,
-        update_metadata_accounts_v2,
+        mint_new_edition_from_master_edition_via_token, set_and_verify_sized_collection_item,
+        unverify_sized_collection_item, update_metadata_accounts_v2,
     },
     state::{Creator, DataV2, EDITION, PREFIX},
 };
@@ -597,9 +596,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
     ) -> Result<TransactionResponse<SwitchCollectionAddresses>> {
         let rpc = &self.0.rpc_client;
         let payer = self.0.treasury_wallet_address;
-        println!("mint: {:?}", mint);
-        println!("collection: {:?}", collection);
-        println!("new_collection: {:?}", new_collection);
+
         let mint_pubkey = Pubkey::from_str(&mint.mint)?;
         let program_pubkey = mpl_token_metadata::id();
         let metadata_seeds = &[
@@ -608,8 +605,6 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
             mint_pubkey.as_ref(),
         ];
         let (metadata, _) = Pubkey::find_program_address(metadata_seeds, &program_pubkey);
-
-        println!("metadata: {:?}", metadata);
 
         let collection_authority = collection.owner.parse()?;
         let collection_mint = Pubkey::from_str(&collection.mint)?;
@@ -621,7 +616,6 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
         let (collection_metadata, _) =
             Pubkey::find_program_address(collection_metadata_seeds, &program_pubkey);
 
-        println!("collection_metadata: {:?}", collection_metadata);
         let collection_master_edition = collection.master_edition.parse()?;
 
         let unverify_ins = unverify_sized_collection_item(
