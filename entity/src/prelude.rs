@@ -2,5 +2,5 @@
 
 pub use super::{
     collection_mints::Entity as CollectionMints, collections::Entity as Collections,
-    compression_leafs::Entity as CompressionLeafs,
+    compression_leafs::Entity as CompressionLeafs, update_revisions::Entity as UpdateRevisions,
 };

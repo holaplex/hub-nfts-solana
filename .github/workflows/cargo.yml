@@ -85,7 +85,7 @@ jobs:
       - name: Install rust nightly
         uses: actions-rs/toolchain@v1
         with:
-            toolchain: nightly-2022-12-11
+            toolchain: 1.69.0
             override: true
             components: rustfmt, clippy
       - name: cargo fmt

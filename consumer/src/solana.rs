@@ -2,9 +2,11 @@ use anchor_lang::{prelude::AccountMeta, AnchorDeserialize, InstructionData};
 use holaplex_hub_nfts_solana_core::proto::{
     treasury_events::SolanaTransactionResult, MasterEdition, MetaplexMasterEditionTransaction,
     MetaplexMetadata, MintMetaplexEditionTransaction, MintMetaplexMetadataTransaction,
-    TransferMetaplexAssetTransaction,
+    TransferMetaplexAssetTransaction, UpdateSolanaMintPayload,
 };
-use holaplex_hub_nfts_solana_entity::{collection_mints, collections, compression_leafs};
+use holaplex_hub_nfts_solana_entity::{
+    collection_mints, collections, compression_leafs, update_revisions,
+};
 use hub_core::{anyhow::Result, clap, prelude::*, thiserror, uuid::Uuid};
 use mpl_bubblegum::state::metaplex_adapter::{
     Collection, Creator as BubblegumCreator, TokenProgramVersion,
@@ -41,7 +43,8 @@ use crate::{
     backend::{
         CollectionBackend, MasterEditionAddresses, MintBackend, MintCompressedMintV1Addresses,
         MintEditionAddresses, MintMetaplexAddresses, TransactionResponse, TransferAssetAddresses,
-        TransferBackend, TransferCompressedMintV1Addresses, UpdateMasterEditionAddresses,
+        TransferBackend, TransferCompressedMintV1Addresses, UpdateCollectionMintAddresses,
+        UpdateMasterEditionAddresses,
     },
 };
 
@@ -463,6 +466,118 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
                 update_authority.to_string(),
             ],
             addresses: UpdateMasterEditionAddresses {
+                metadata,
+                update_authority,
+            },
+        })
+    }
+
+    fn update_mint(
+        &self,
+        collection: &collections::Model,
+        collection_mint: &collection_mints::Model,
+        payload: UpdateSolanaMintPayload,
+    ) -> Result<TransactionResponse<UpdateCollectionMintAddresses>> {
+        let metadata = payload
+            .metadata
+            .ok_or(SolanaErrorNotFoundMessage::Metadata)?;
+        let payer: Pubkey = self.0.treasury_wallet_address;
+        let rpc = &self.0.rpc_client;
+
+        let MetaplexMetadata {
+            name,
+            symbol,
+            seller_fee_basis_points,
+            metadata_uri,
+            creators,
+            owner_address,
+        } = metadata;
+        let update_authority: Pubkey = owner_address.parse()?;
+        let mint_pubkey: Pubkey = collection_mint.mint.parse()?;
+
+        let (metadata, _) = Pubkey::find_program_address(
+            &[
+                b"metadata",
+                mpl_token_metadata::ID.as_ref(),
+                mint_pubkey.as_ref(),
+            ],
+            &mpl_token_metadata::ID,
+        );
+
+        let blockhash = rpc.get_latest_blockhash()?;
+
+        let update_ins: Instruction = mpl_token_metadata::instruction::update_metadata_accounts_v2(
+            mpl_token_metadata::ID,
+            metadata,
+            update_authority,
+            None,
+            Some(DataV2 {
+                name,
+                symbol,
+                uri: metadata_uri,
+                seller_fee_basis_points: seller_fee_basis_points.try_into()?,
+                creators: Some(
+                    creators
+                        .into_iter()
+                        .map(TryInto::try_into)
+                        .collect::<Result<Vec<Creator>, _>>()?,
+                ),
+                collection: Some(mpl_token_metadata::state::Collection {
+                    verified: true,
+                    key: collection.mint.parse()?,
+                }),
+                uses: None,
+            }),
+            None,
+            Some(true),
+        );
+
+        let message = solana_program::message::Message::new_with_blockhash(
+            &[update_ins],
+            Some(&payer),
+            &blockhash,
+        );
+
+        let serialized_message = message.serialize();
+
+        Ok(TransactionResponse {
+            serialized_message,
+            signatures_or_signers_public_keys: vec![
+                payer.to_string(),
+                update_authority.to_string(),
+            ],
+            addresses: UpdateCollectionMintAddresses {
+                payer,
+                metadata,
+                update_authority,
+            },
+        })
+    }
+
+    fn retry_update_mint(
+        &self,
+        revision: &update_revisions::Model,
+    ) -> Result<TransactionResponse<UpdateCollectionMintAddresses>> {
+        let rpc = &self.0.rpc_client;
+
+        let update_authority: Pubkey = revision.update_authority.parse()?;
+        let metadata = revision.metadata.parse()?;
+        let payer = Pubkey::from_str(&revision.payer)?;
+
+        let mut message: solana_program::message::Message =
+            bincode::deserialize(&revision.serialized_message)?;
+
+        let blockhash = rpc.get_latest_blockhash()?;
+        message.recent_blockhash = blockhash;
+
+        Ok(TransactionResponse {
+            serialized_message: message.serialize(),
+            signatures_or_signers_public_keys: vec![
+                payer.to_string(),
+                update_authority.to_string(),
+            ],
+            addresses: UpdateCollectionMintAddresses {
+                payer,
                 metadata,
                 update_authority,
             },
