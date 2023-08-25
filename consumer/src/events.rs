@@ -36,14 +36,16 @@ use crate::{
     solana::{CompressedRef, EditionRef, Solana, SolanaAssetIdError, UncompressedRef},
 };
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Triage)]
 pub enum ProcessorErrorKind {
     #[error("Associated record not found in database")]
+    #[transient]
     RecordNotFound,
     #[error("Transaction status not found in treasury event payload")]
     TransactionStatusNotFound,
 
     #[error("Error processing Solana operation")]
+    #[transient]
     Solana(#[source] Error),
     #[error("Error sending message")]
     SendError(#[from] SendError),
@@ -59,7 +61,7 @@ pub enum ProcessorErrorKind {
     AssetId(#[from] SolanaAssetIdError),
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Triage)]
 #[error("Error handling {} of {}", src.name(), evt.name())]
 pub struct ProcessorError {
     #[source]

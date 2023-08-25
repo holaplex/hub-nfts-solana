@@ -21,7 +21,7 @@ pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/treasury.proto.rs"));
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Services {
     Nfts(proto::NftEventKey, proto::NftEvents),
     Treasury(proto::TreasuryEventKey, proto::TreasuryEvents),
