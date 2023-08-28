@@ -5,7 +5,6 @@ use holaplex_hub_nfts_solana_core::proto::{
 use holaplex_hub_nfts_solana_entity::{collection_mints, collections, update_revisions};
 use hub_core::prelude::*;
 use solana_program::pubkey::Pubkey;
-
 #[derive(Clone)]
 pub struct MasterEditionAddresses {
     pub metadata: Pubkey,
@@ -60,6 +59,12 @@ pub struct UpdateCollectionMintAddresses {
     pub payer: Pubkey,
     pub metadata: Pubkey,
     pub update_authority: Pubkey,
+}
+
+#[derive(Clone)]
+pub struct SwitchCollectionAddresses {
+    pub payer: Pubkey,
+    pub new_collection_authority: Pubkey,
 }
 
 #[derive(Clone)]
@@ -121,6 +126,13 @@ pub trait CollectionBackend {
         &self,
         revision: &update_revisions::Model,
     ) -> Result<TransactionResponse<UpdateCollectionMintAddresses>>;
+
+    fn switch(
+        &self,
+        mint: &collection_mints::Model,
+        collection: &collections::Model,
+        new_collection: &collections::Model,
+    ) -> Result<TransactionResponse<SwitchCollectionAddresses>>;
 }
 
 pub trait MintBackend<T, R> {
