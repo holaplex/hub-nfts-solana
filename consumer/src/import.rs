@@ -218,18 +218,15 @@ impl Processor {
         let (metadata_pubkey, _) = find_metadata_account(&mint);
 
         let (master_edition, _) = find_master_edition_account(&mint);
-        let collection_model = Collection::create(
-            conn,
-            collections::ActiveModel {
-                master_edition: Set(master_edition.to_string()),
-                update_authority: Set(update_authority.to_string()),
-                associated_token_account: Set(ata.to_string()),
-                owner: Set(owner.to_string()),
-                mint: Set(mint.to_string()),
-                metadata: Set(metadata_pubkey.to_string()),
-                ..Default::default()
-            },
-        )
+        let collection_model = Collection::create(conn, collections::ActiveModel {
+            master_edition: Set(master_edition.to_string()),
+            update_authority: Set(update_authority.to_string()),
+            associated_token_account: Set(ata.to_string()),
+            owner: Set(owner.to_string()),
+            mint: Set(mint.to_string()),
+            metadata: Set(metadata_pubkey.to_string()),
+            ..Default::default()
+        })
         .await?;
 
         producer
