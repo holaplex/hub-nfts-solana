@@ -6729,8 +6729,8 @@ dependencies = [
 
 [[package]]
 name = "yellowstone-grpc-client"
-version = "1.4.0+solana.1.16.1"
-source = "git+https://github.com/rpcpool/yellowstone-grpc?tag=v1.0.0+solana.1.16.1#ef9c079f078b384cdf9136d110a61398511a5e78"
+version = "1.9.0+solana.1.16.1"
+source = "git+https://github.com/rpcpool/yellowstone-grpc?tag=v1.7.1+solana.1.16.1#afd6569ddc8f4d2c377c50c0497ca0650c2836d5"
 dependencies = [
  "bytes",
  "futures",
@@ -6743,8 +6743,8 @@ dependencies = [
 
 [[package]]
 name = "yellowstone-grpc-proto"
-version = "1.4.0+solana.1.16.1"
-source = "git+https://github.com/rpcpool/yellowstone-grpc?tag=v1.0.0+solana.1.16.1#ef9c079f078b384cdf9136d110a61398511a5e78"
+version = "1.9.0+solana.1.16.1"
+source = "git+https://github.com/rpcpool/yellowstone-grpc?tag=v1.7.1+solana.1.16.1#afd6569ddc8f4d2c377c50c0497ca0650c2836d5"
 dependencies = [
  "anyhow",
  "prost",
