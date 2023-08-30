@@ -1,8 +1,10 @@
-use core::fmt;
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt};
 
+use hub_core::bs58;
 use solana_program::pubkey::Pubkey;
+
 mod b58 {
+    use hub_core::bs58;
     use serde::{de::Visitor, Deserializer, Serializer};
 
     pub fn serialize<S: Serializer>(bytes: &[u8], ser: S) -> Result<S::Ok, S::Error> {

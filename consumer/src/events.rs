@@ -8,7 +8,8 @@ use holaplex_hub_nfts_solana_core::{
         MintMetaplexMetadataTransaction, SolanaCompletedMintTransaction,
         SolanaCompletedTransferTransaction, SolanaCompletedUpdateTransaction,
         SolanaFailedTransaction, SolanaNftEventKey, SolanaNftEvents, SolanaPendingTransaction,
-        SolanaTransactionFailureReason, TransferMetaplexAssetTransaction, UpdateSolanaMintPayload,
+        SolanaTransactionFailureReason, SwitchCollectionPayload, TransferMetaplexAssetTransaction,
+        UpdateSolanaMintPayload,
     },
     sea_orm::{ActiveModelTrait, DatabaseConnection, DbErr, EntityTrait, Set},
     Collection, CollectionMint, CompressionLeaf, Services,
@@ -36,14 +37,16 @@ use crate::{
     solana::{CompressedRef, EditionRef, Solana, SolanaAssetIdError, UncompressedRef},
 };
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Triage)]
 pub enum ProcessorErrorKind {
     #[error("Associated record not found in database")]
+    #[transient]
     RecordNotFound,
     #[error("Transaction status not found in treasury event payload")]
     TransactionStatusNotFound,
 
     #[error("Error processing Solana operation")]
+    #[transient]
     Solana(#[source] Error),
     #[error("Error sending message")]
     SendError(#[from] SendError),
@@ -59,7 +62,7 @@ pub enum ProcessorErrorKind {
     AssetId(#[from] SolanaAssetIdError),
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Triage)]
 #[error("Error handling {} of {}", src.name(), evt.name())]
 pub struct ProcessorError {
     #[source]
@@ -113,6 +116,7 @@ pub enum EventKind {
     RetryMintToCollection,
     UpdateCollectionMint,
     RetryUpdateCollectionMint,
+    SwitchMintCollection,
 }
 
 impl EventKind {
@@ -131,6 +135,7 @@ impl EventKind {
             Self::RetryMintToCollection => "mint to collection retry",
             Self::UpdateCollectionMint => "collection mint update",
             Self::RetryUpdateCollectionMint => "collection mint update retry",
+            Self::SwitchMintCollection => "switch mint collection",
         }
     }
 
@@ -156,6 +161,9 @@ impl EventKind {
             },
             EventKind::RetryUpdateCollectionMint => {
                 SolanaNftEvent::RetryUpdateMintSigningRequested(tx)
+            },
+            EventKind::SwitchMintCollection => {
+                SolanaNftEvent::SwitchMintCollectionSigningRequested(tx)
             },
         }
     }
@@ -308,6 +316,11 @@ impl EventKind {
                     signature,
                 })
             },
+            Self::SwitchMintCollection => {
+                SolanaNftEvent::SwitchMintCollectionSubmitted(SolanaCompletedUpdateTransaction {
+                    signature,
+                })
+            },
         })
     }
 
@@ -326,6 +339,7 @@ impl EventKind {
             Self::RetryMintToCollection => SolanaNftEvent::RetryMintToCollectionFailed(tx),
             Self::UpdateCollectionMint => SolanaNftEvent::UpdateCollectionMintFailed(tx),
             Self::RetryUpdateCollectionMint => SolanaNftEvent::RetryUpdateMintFailed(tx),
+            Self::SwitchMintCollection => SolanaNftEvent::SwitchMintCollectionFailed(tx),
         }
     }
 }
@@ -482,6 +496,15 @@ impl Processor {
                         )
                         .await
                     },
+                    Some(NftEvent::SolanaSwitchMintCollectionRequested(payload)) => {
+                        self.process_nft(
+                            EventKind::SwitchMintCollection,
+                            &key,
+                            self.switch_mint_collection(&UncompressedRef(self.solana()), payload),
+                        )
+                        .await
+                    },
+
                     _ => Ok(()),
                 }
             },
@@ -536,6 +559,10 @@ impl Processor {
                     },
                     Some(TreasuryEvent::SolanaRetryUpdateCollectionMintSigned(res)) => {
                         self.process_treasury(EventKind::RetryUpdateCollectionMint, key, res)
+                            .await
+                    },
+                    Some(TreasuryEvent::SolanaSwitchMintCollectionSigned(res)) => {
+                        self.process_treasury(EventKind::SwitchMintCollection, key, res)
                             .await
                     },
                     _ => Ok(()),
@@ -915,6 +942,31 @@ impl Processor {
         collection.owner = Set(owner.to_string());
 
         Collection::update(conn, collection).await?;
+
+        Ok(tx.into())
+    }
+
+    async fn switch_mint_collection<B: CollectionBackend>(
+        &self,
+        backend: &B,
+        payload: SwitchCollectionPayload,
+    ) -> ProcessResult<SolanaPendingTransaction> {
+        let conn = self.db.get();
+
+        let (mint, collection) =
+            CollectionMint::find_by_id_with_collection(conn, payload.mint_id.parse()?)
+                .await?
+                .ok_or(ProcessorErrorKind::RecordNotFound)?;
+
+        let collection = collection.ok_or(ProcessorErrorKind::RecordNotFound)?;
+
+        let new_collection = Collection::find_by_id(conn, payload.collection_id.parse()?)
+            .await?
+            .ok_or(ProcessorErrorKind::RecordNotFound)?;
+
+        let tx = backend
+            .switch(&mint, &collection, &new_collection)
+            .map_err(ProcessorErrorKind::Solana)?;
 
         Ok(tx.into())
     }
