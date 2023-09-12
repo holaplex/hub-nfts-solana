@@ -103,12 +103,6 @@ impl ErrorSource {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventKind {
-    CreateOpenDrop,
-    MintOpenDrop,
-    UpdateOpenDrop,
-    RetryCreateOpenDrop,
-    RetryMintOpenDrop,
-
     CreateEditionDrop,
     MintEditionDrop,
     UpdateEditionDrop,
@@ -123,6 +117,11 @@ pub enum EventKind {
     UpdateCollectionMint,
     RetryUpdateCollectionMint,
     SwitchMintCollection,
+    CreateOpenDrop,
+    MintOpenDrop,
+    UpdateOpenDrop,
+    RetryCreateOpenDrop,
+    RetryMintOpenDrop,
 }
 
 impl EventKind {
@@ -240,7 +239,7 @@ impl EventKind {
                     signature,
                 })
             },
-            Self::MintToCollection => {
+            Self::MintToCollection | Self::MintOpenDrop => {
                 let id = id()?;
                 let collection_mint = CollectionMint::find_by_id(conn, id).await?;
 
@@ -270,11 +269,15 @@ impl EventKind {
                         .ok_or(ProcessorErrorKind::RecordNotFound)?
                         .mint
                 };
+                let transaction = SolanaCompletedMintTransaction { signature, address };
 
-                SolanaNftEvent::MintToCollectionSubmitted(SolanaCompletedMintTransaction {
-                    signature,
-                    address,
-                })
+                match self {
+                    Self::MintToCollection => {
+                        SolanaNftEvent::MintToCollectionSubmitted(transaction)
+                    },
+                    Self::MintOpenDrop => SolanaNftEvent::MintOpenDropSubmitted(transaction),
+                    _ => unreachable!(),
+                }
             },
             Self::MintEditionDrop => {
                 let id = id()?;
@@ -354,17 +357,6 @@ impl EventKind {
                 SolanaNftEvent::CreateOpenDropSubmitted(SolanaCompletedMintTransaction {
                     signature,
                     address: collection.mint,
-                })
-            },
-            Self::MintOpenDrop => {
-                let id = id()?;
-                let collection_mint = CollectionMint::find_by_id(conn, id)
-                    .await?
-                    .ok_or(ProcessorErrorKind::RecordNotFound)?;
-
-                SolanaNftEvent::MintOpenDropSubmitted(SolanaCompletedMintTransaction {
-                    signature,
-                    address: collection_mint.mint,
                 })
             },
             Self::UpdateOpenDrop => {
