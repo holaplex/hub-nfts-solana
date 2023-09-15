@@ -791,7 +791,7 @@ impl Processor {
         let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(0);
 
         self.metrics
-            .rpc_tx_duration_ms_bucket
+            .rpc_tx_submission_duration_ms_bucket
             .record(elapsed, &[KeyValue::new("blockchain", "Solana")]);
         res
     }
@@ -904,12 +904,13 @@ impl Processor {
             CompressionLeaf::create(conn, compression_leaf).await?;
             let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(0);
 
-            self.metrics
-                .rpc_get_blockhash_duration_ms_bucket
-                .record(elapsed, &[
+            self.metrics.rpc_tx_assembly_duration_ms_bucket.record(
+                elapsed,
+                &[
                     KeyValue::new("blockchain", "Solana"),
                     KeyValue::new("compressed", "true"),
-                ]);
+                ],
+            );
 
             return Ok(tx.into());
         }
@@ -932,12 +933,13 @@ impl Processor {
         CollectionMint::create(conn, collection_mint).await?;
         let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(0);
 
-        self.metrics
-            .rpc_get_blockhash_duration_ms_bucket
-            .record(elapsed, &[
+        self.metrics.rpc_tx_assembly_duration_ms_bucket.record(
+            elapsed,
+            &[
                 KeyValue::new("blockchain", "Solana"),
                 KeyValue::new("compressed", "false"),
-            ]);
+            ],
+        );
 
         Ok(tx.into())
     }

@@ -8,8 +8,8 @@ use hub_core::{
 pub struct Metrics {
     pub registry: Registry,
     pub provider: MeterProvider,
-    pub rpc_tx_duration_ms_bucket: Histogram<i64>,
-    pub rpc_get_blockhash_duration_ms_bucket: Histogram<i64>,
+    pub rpc_tx_submission_duration_ms_bucket: Histogram<i64>,
+    pub rpc_tx_assembly_duration_ms_bucket: Histogram<i64>,
 }
 
 impl Metrics {
@@ -33,23 +33,23 @@ impl Metrics {
 
         let meter = provider.meter("hub-nfts-solana");
 
-        let rpc_tx_duration_ms_bucket = meter
-            .i64_histogram("rpc_tx.time")
+        let rpc_tx_submission_duration_ms_bucket = meter
+            .i64_histogram("rpc_tx_submission.time")
             .with_unit(Unit::new("ms"))
             .with_description("RPC Tx duration time in milliseconds.")
             .init();
 
-        let rpc_get_blockhash_duration_ms_bucket = meter
-            .i64_histogram("rpc_get_blockhash.time")
+        let rpc_tx_assembly_duration_ms_bucket = meter
+            .i64_histogram("rpc_tx_assembly.time")
             .with_unit(Unit::new("ms"))
-            .with_description("RPC get blockhash duration time in milliseconds.")
+            .with_description("Transaction assembly duration time in milliseconds.")
             .init();
 
         Ok(Self {
             registry,
             provider,
-            rpc_tx_duration_ms_bucket,
-            rpc_get_blockhash_duration_ms_bucket,
+            rpc_tx_submission_duration_ms_bucket,
+            rpc_tx_assembly_duration_ms_bucket,
         })
     }
 }
