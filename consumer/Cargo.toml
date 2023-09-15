@@ -32,10 +32,10 @@ holaplex-hub-nfts-solana-core = { path = "../core" }
 holaplex-hub-nfts-solana-entity = { path = "../entity" }
 jsonrpsee = { version = "0.19.0", features = ["macros", "http-client"] }
 rand = "0.8.5"
+poem = { version = "1.3.50", features = ["anyhow", "test"] }
 
 [dependencies.hub-core]
 package = "holaplex-hub-core"
-version = "0.5.0"
+version = "0.5.5"
 git = "https://github.com/holaplex/hub-core"
-branch = "stable"
-features = ["jsonrpsee-core", "kafka", "sea-orm", "solana"]
+features = ["jsonrpsee-core", "kafka", "sea-orm", "solana", "metrics"]

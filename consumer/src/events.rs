@@ -17,8 +17,10 @@ use holaplex_hub_nfts_solana_core::{
 use holaplex_hub_nfts_solana_entity::{
     collection_mints, collections, compression_leafs, update_revisions,
 };
+
 use hub_core::{
     chrono::Utc,
+    metrics::KeyValue,
     prelude::*,
     producer::{Producer, SendError},
     thiserror,
@@ -28,12 +30,14 @@ use hub_core::{
 };
 use solana_program::pubkey::{ParsePubkeyError, Pubkey};
 use solana_sdk::signature::Signature;
+use std::time::Instant;
 
 use crate::{
     backend::{
         CollectionBackend, MasterEditionAddresses, MintBackend, MintEditionAddresses,
         MintMetaplexAddresses, TransferBackend, UpdateCollectionMintAddresses,
     },
+    metrics::Metrics,
     solana::{CompressedRef, EditionRef, Solana, SolanaAssetIdError, UncompressedRef},
 };
 
@@ -419,16 +423,23 @@ pub struct Processor {
     solana: DebugShim<Solana>,
     db: db::Connection,
     producer: Producer<SolanaNftEvents>,
+    metrics: Metrics,
 }
 
 impl Processor {
     #[inline]
     #[must_use]
-    pub fn new(solana: Solana, db: db::Connection, producer: Producer<SolanaNftEvents>) -> Self {
+    pub fn new(
+        solana: Solana,
+        db: db::Connection,
+        producer: Producer<SolanaNftEvents>,
+        metrics: Metrics,
+    ) -> Self {
         Self {
             solana: DebugShim(solana),
             db,
             producer,
+            metrics,
         }
     }
 
@@ -1119,6 +1130,7 @@ impl Processor {
         key: &SolanaNftEventKey,
         payload: MintMetaplexEditionTransaction,
     ) -> ProcessResult<SolanaPendingTransaction> {
+        let start = Instant::now();
         let conn = self.db.get();
         let id = Uuid::parse_str(&key.id.clone())?;
 
@@ -1146,6 +1158,12 @@ impl Processor {
         collection_mint.associated_token_account = Set(associated_token_account.to_string());
 
         CollectionMint::update(conn, collection_mint).await?;
+
+        let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(0);
+
+        self.metrics
+            .rpc_tx_duration_ms_bucket
+            .record(elapsed, &[KeyValue::new("blockchain", "Solana")]);
 
         Ok(tx.into())
     }
