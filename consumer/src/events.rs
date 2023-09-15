@@ -757,6 +757,7 @@ impl Processor {
         key: SolanaNftEventKey,
         res: SolanaTransactionResult,
     ) -> Result<()> {
+        let start = Instant::now();
         let status = TransactionStatus::from_i32(res.status).ok_or_else(|| {
             ProcessorError::new(
                 ProcessorErrorKind::TransactionStatusNotFound,
@@ -772,7 +773,7 @@ impl Processor {
                 .map_err(|k| ProcessorError::new(k, kind, ErrorSource::TreasuryStatus));
         }
 
-        match self.solana().submit_transaction(&res) {
+        let res = match self.solana().submit_transaction(&res) {
             Ok(sig) => self
                 .event_submitted(kind, &key, sig)
                 .await
@@ -786,7 +787,13 @@ impl Processor {
                     .await
                     .map_err(|k| ProcessorError::new(k, kind, ErrorSource::TreasuryFailure))
             },
-        }
+        };
+        let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(0);
+
+        self.metrics
+            .rpc_tx_duration_ms_bucket
+            .record(elapsed, &[KeyValue::new("blockchain", "Solana")]);
+        res
     }
 
     async fn event_submitted(
@@ -897,10 +904,12 @@ impl Processor {
             CompressionLeaf::create(conn, compression_leaf).await?;
             let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(0);
 
-            self.metrics.rpc_tx_duration_ms_bucket.record(elapsed, &[
-                KeyValue::new("blockchain", "Solana"),
-                KeyValue::new("compressed", "true"),
-            ]);
+            self.metrics
+                .rpc_get_blockhash_duration_ms_bucket
+                .record(elapsed, &[
+                    KeyValue::new("blockchain", "Solana"),
+                    KeyValue::new("compressed", "true"),
+                ]);
 
             return Ok(tx.into());
         }
@@ -923,10 +932,12 @@ impl Processor {
         CollectionMint::create(conn, collection_mint).await?;
         let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(0);
 
-        self.metrics.rpc_tx_duration_ms_bucket.record(elapsed, &[
-            KeyValue::new("blockchain", "Solana"),
-            KeyValue::new("compressed", "false"),
-        ]);
+        self.metrics
+            .rpc_get_blockhash_duration_ms_bucket
+            .record(elapsed, &[
+                KeyValue::new("blockchain", "Solana"),
+                KeyValue::new("compressed", "false"),
+            ]);
 
         Ok(tx.into())
     }
