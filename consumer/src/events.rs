@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use holaplex_hub_nfts_solana_core::{
     db,
     proto::{
@@ -17,7 +19,6 @@ use holaplex_hub_nfts_solana_core::{
 use holaplex_hub_nfts_solana_entity::{
     collection_mints, collections, compression_leafs, update_revisions,
 };
-
 use hub_core::{
     chrono::Utc,
     metrics::KeyValue,
@@ -30,7 +31,6 @@ use hub_core::{
 };
 use solana_program::pubkey::{ParsePubkeyError, Pubkey};
 use solana_sdk::signature::Signature;
-use std::time::Instant;
 
 use crate::{
     backend::{
