@@ -897,10 +897,13 @@ impl Processor {
             CompressionLeaf::create(conn, compression_leaf).await?;
             let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(0);
 
-            self.metrics.rpc_tx_duration_ms_bucket.record(elapsed, &[
-                KeyValue::new("blockchain", "Solana"),
-                KeyValue::new("compressed", "true"),
-            ]);
+            self.metrics.rpc_tx_duration_ms_bucket.record(
+                elapsed,
+                &[
+                    KeyValue::new("blockchain", "Solana"),
+                    KeyValue::new("compressed", "true"),
+                ],
+            );
 
             return Ok(tx.into());
         }
@@ -923,10 +926,13 @@ impl Processor {
         CollectionMint::create(conn, collection_mint).await?;
         let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(0);
 
-        self.metrics.rpc_tx_duration_ms_bucket.record(elapsed, &[
-            KeyValue::new("blockchain", "Solana"),
-            KeyValue::new("compressed", "false"),
-        ]);
+        self.metrics.rpc_tx_duration_ms_bucket.record(
+            elapsed,
+            &[
+                KeyValue::new("blockchain", "Solana"),
+                KeyValue::new("compressed", "false"),
+            ],
+        );
 
         Ok(tx.into())
     }
@@ -1143,7 +1149,6 @@ impl Processor {
         key: &SolanaNftEventKey,
         payload: MintMetaplexEditionTransaction,
     ) -> ProcessResult<SolanaPendingTransaction> {
-        let start = Instant::now();
         let conn = self.db.get();
         let id = Uuid::parse_str(&key.id.clone())?;
 
@@ -1171,12 +1176,6 @@ impl Processor {
         collection_mint.associated_token_account = Set(associated_token_account.to_string());
 
         CollectionMint::update(conn, collection_mint).await?;
-
-        let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(0);
-
-        self.metrics
-            .rpc_tx_duration_ms_bucket
-            .record(elapsed, &[KeyValue::new("blockchain", "Solana")]);
 
         Ok(tx.into())
     }
