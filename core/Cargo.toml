@@ -30,7 +30,7 @@ mpl-bubblegum = "0.7.0"
 package = "holaplex-hub-core"
 version = "0.5.5"
 git = "https://github.com/holaplex/hub-core"
-#branch = "stable"
+branch = "stable"
 features = ["kafka", "kafka_internal"]
 
 [build-dependencies.hub-core-build]
