@@ -1,5 +1,6 @@
 mod connector;
 mod handler;
+mod processor;
 use clap::{arg, command};
 pub use connector::GeyserGrpcConnector;
 pub use handler::MessageHandler;

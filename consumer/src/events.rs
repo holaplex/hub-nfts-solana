@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use holaplex_hub_nfts_solana_core::{
     db,
     proto::{
@@ -19,6 +21,7 @@ use holaplex_hub_nfts_solana_entity::{
 };
 use hub_core::{
     chrono::Utc,
+    metrics::KeyValue,
     prelude::*,
     producer::{Producer, SendError},
     thiserror,
@@ -34,6 +37,7 @@ use crate::{
         CollectionBackend, MasterEditionAddresses, MintBackend, MintEditionAddresses,
         MintMetaplexAddresses, TransferBackend, UpdateCollectionMintAddresses,
     },
+    metrics::Metrics,
     solana::{CompressedRef, EditionRef, Solana, SolanaAssetIdError, UncompressedRef},
 };
 
@@ -103,12 +107,12 @@ impl ErrorSource {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventKind {
-    CreateDrop,
-    MintDrop,
-    UpdateDrop,
+    CreateEditionDrop,
+    MintEditionDrop,
+    UpdateEditionDrop,
     TransferAsset,
-    RetryCreateDrop,
-    RetryMintDrop,
+    RetryCreateEditionDrop,
+    RetryMintEditionDrop,
     CreateCollection,
     RetryCreateCollection,
     UpdateCollection,
@@ -117,17 +121,22 @@ pub enum EventKind {
     UpdateCollectionMint,
     RetryUpdateCollectionMint,
     SwitchMintCollection,
+    CreateOpenDrop,
+    MintOpenDrop,
+    UpdateOpenDrop,
+    RetryCreateOpenDrop,
+    RetryMintOpenDrop,
 }
 
 impl EventKind {
     fn name(self) -> &'static str {
         match self {
-            Self::CreateDrop => "drop creation",
-            Self::MintDrop => "drop mint",
-            Self::UpdateDrop => "drop update",
+            Self::CreateEditionDrop => "edition drop creation",
+            Self::MintEditionDrop => "edition drop mint",
+            Self::UpdateEditionDrop => "edition drop update",
             Self::TransferAsset => "asset transfer",
-            Self::RetryCreateDrop => "drop creation retry",
-            Self::RetryMintDrop => "drop mint retry",
+            Self::RetryCreateEditionDrop => "editiondrop creation retry",
+            Self::RetryMintEditionDrop => "edition drop mint retry",
             Self::CreateCollection => "collection creation",
             Self::RetryCreateCollection => "collection creation retry",
             Self::UpdateCollection => "collection update",
@@ -136,17 +145,26 @@ impl EventKind {
             Self::UpdateCollectionMint => "collection mint update",
             Self::RetryUpdateCollectionMint => "collection mint update retry",
             Self::SwitchMintCollection => "switch mint collection",
+            Self::CreateOpenDrop => "open drop creation",
+            Self::MintOpenDrop => "open drop mint",
+            Self::UpdateOpenDrop => "open drop update",
+            Self::RetryCreateOpenDrop => "open drop creation retry",
+            Self::RetryMintOpenDrop => "open drop mint retry",
         }
     }
 
     fn into_sign_request(self, tx: SolanaPendingTransaction) -> SolanaNftEvent {
         match self {
-            EventKind::CreateDrop => SolanaNftEvent::CreateDropSigningRequested(tx),
-            EventKind::MintDrop => SolanaNftEvent::MintDropSigningRequested(tx),
-            EventKind::UpdateDrop => SolanaNftEvent::UpdateDropSigningRequested(tx),
+            EventKind::CreateEditionDrop => SolanaNftEvent::CreateEditionDropSigningRequested(tx),
+            EventKind::MintEditionDrop => SolanaNftEvent::MintEditionDropSigningRequested(tx),
+            EventKind::UpdateEditionDrop => SolanaNftEvent::UpdateEditionDropSigningRequested(tx),
             EventKind::TransferAsset => SolanaNftEvent::TransferAssetSigningRequested(tx),
-            EventKind::RetryCreateDrop => SolanaNftEvent::RetryCreateDropSigningRequested(tx),
-            EventKind::RetryMintDrop => SolanaNftEvent::RetryMintDropSigningRequested(tx),
+            EventKind::RetryCreateEditionDrop => {
+                SolanaNftEvent::RetryCreateEditionDropSigningRequested(tx)
+            },
+            EventKind::RetryMintEditionDrop => {
+                SolanaNftEvent::RetryMintEditionDropSigningRequested(tx)
+            },
             EventKind::CreateCollection => SolanaNftEvent::CreateCollectionSigningRequested(tx),
             EventKind::UpdateCollection => SolanaNftEvent::UpdateCollectionSigningRequested(tx),
             EventKind::RetryCreateCollection => {
@@ -165,6 +183,13 @@ impl EventKind {
             EventKind::SwitchMintCollection => {
                 SolanaNftEvent::SwitchMintCollectionSigningRequested(tx)
             },
+            EventKind::CreateOpenDrop => SolanaNftEvent::CreateOpenDropSigningRequested(tx),
+            EventKind::MintOpenDrop => SolanaNftEvent::MintOpenDropSigningRequested(tx),
+            EventKind::UpdateOpenDrop => SolanaNftEvent::UpdateOpenDropSigningRequested(tx),
+            EventKind::RetryCreateOpenDrop => {
+                SolanaNftEvent::RetryCreateOpenDropSigningRequested(tx)
+            },
+            EventKind::RetryMintOpenDrop => SolanaNftEvent::RetryMintOpenDropSigningRequested(tx),
         }
     }
 
@@ -178,13 +203,13 @@ impl EventKind {
         let id = || Uuid::parse_str(&key.id);
 
         Ok(match self {
-            Self::CreateDrop => {
+            Self::CreateEditionDrop => {
                 let id = id()?;
                 let collection = Collection::find_by_id(conn, id)
                     .await?
                     .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
-                SolanaNftEvent::CreateDropSubmitted(SolanaCompletedMintTransaction {
+                SolanaNftEvent::CreateEditionDropSubmitted(SolanaCompletedMintTransaction {
                     signature,
                     address: collection.mint,
                 })
@@ -218,7 +243,7 @@ impl EventKind {
                     signature,
                 })
             },
-            Self::MintToCollection => {
+            Self::MintToCollection | Self::MintOpenDrop => {
                 let id = id()?;
                 let collection_mint = CollectionMint::find_by_id(conn, id).await?;
 
@@ -248,49 +273,55 @@ impl EventKind {
                         .ok_or(ProcessorErrorKind::RecordNotFound)?
                         .mint
                 };
+                let transaction = SolanaCompletedMintTransaction { signature, address };
 
-                SolanaNftEvent::MintToCollectionSubmitted(SolanaCompletedMintTransaction {
-                    signature,
-                    address,
-                })
+                match self {
+                    Self::MintToCollection => {
+                        SolanaNftEvent::MintToCollectionSubmitted(transaction)
+                    },
+                    Self::MintOpenDrop => SolanaNftEvent::MintOpenDropSubmitted(transaction),
+                    _ => unreachable!(),
+                }
             },
-            Self::MintDrop => {
+            Self::MintEditionDrop => {
                 let id = id()?;
                 let collection_mint = CollectionMint::find_by_id(conn, id)
                     .await?
                     .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
-                SolanaNftEvent::MintDropSubmitted(SolanaCompletedMintTransaction {
+                SolanaNftEvent::MintEditionDropSubmitted(SolanaCompletedMintTransaction {
                     signature,
                     address: collection_mint.mint,
                 })
             },
-            Self::UpdateDrop => {
-                SolanaNftEvent::UpdateDropSubmitted(SolanaCompletedUpdateTransaction { signature })
+            Self::UpdateEditionDrop => {
+                SolanaNftEvent::UpdateEditionDropSubmitted(SolanaCompletedUpdateTransaction {
+                    signature,
+                })
             },
             Self::TransferAsset => {
                 SolanaNftEvent::TransferAssetSubmitted(SolanaCompletedTransferTransaction {
                     signature,
                 })
             },
-            Self::RetryCreateDrop => {
+            Self::RetryCreateEditionDrop => {
                 let id = id()?;
                 let collection = Collection::find_by_id(conn, id)
                     .await?
                     .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
-                SolanaNftEvent::RetryCreateDropSubmitted(SolanaCompletedMintTransaction {
+                SolanaNftEvent::RetryCreateEditionDropSubmitted(SolanaCompletedMintTransaction {
                     signature,
                     address: collection.mint,
                 })
             },
-            Self::RetryMintDrop => {
+            Self::RetryMintEditionDrop => {
                 let id = id()?;
                 let collection_mint = CollectionMint::find_by_id(conn, id)
                     .await?
                     .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
-                SolanaNftEvent::RetryMintDropSubmitted(SolanaCompletedMintTransaction {
+                SolanaNftEvent::RetryMintEditionDropSubmitted(SolanaCompletedMintTransaction {
                     signature,
                     address: collection_mint.mint,
                 })
@@ -321,17 +352,55 @@ impl EventKind {
                     signature,
                 })
             },
+            Self::CreateOpenDrop => {
+                let id = id()?;
+                let collection = Collection::find_by_id(conn, id)
+                    .await?
+                    .ok_or(ProcessorErrorKind::RecordNotFound)?;
+
+                SolanaNftEvent::CreateOpenDropSubmitted(SolanaCompletedMintTransaction {
+                    signature,
+                    address: collection.mint,
+                })
+            },
+            Self::UpdateOpenDrop => {
+                SolanaNftEvent::UpdateOpenDropSubmitted(SolanaCompletedUpdateTransaction {
+                    signature,
+                })
+            },
+            Self::RetryCreateOpenDrop => {
+                let id = id()?;
+                let collection = Collection::find_by_id(conn, id)
+                    .await?
+                    .ok_or(ProcessorErrorKind::RecordNotFound)?;
+
+                SolanaNftEvent::RetryCreateOpenDropSubmitted(SolanaCompletedMintTransaction {
+                    signature,
+                    address: collection.mint,
+                })
+            },
+            Self::RetryMintOpenDrop => {
+                let id = id()?;
+                let collection_mint = CollectionMint::find_by_id(conn, id)
+                    .await?
+                    .ok_or(ProcessorErrorKind::RecordNotFound)?;
+
+                SolanaNftEvent::RetryMintOpenDropSubmitted(SolanaCompletedMintTransaction {
+                    signature,
+                    address: collection_mint.mint,
+                })
+            },
         })
     }
 
     fn into_failure(self, tx: SolanaFailedTransaction) -> SolanaNftEvent {
         match self {
-            Self::CreateDrop => SolanaNftEvent::CreateDropFailed(tx),
-            Self::MintDrop => SolanaNftEvent::MintDropFailed(tx),
-            Self::UpdateDrop => SolanaNftEvent::UpdateDropFailed(tx),
+            Self::CreateEditionDrop => SolanaNftEvent::CreateEditionDropFailed(tx),
+            Self::MintEditionDrop => SolanaNftEvent::MintEditionDropFailed(tx),
+            Self::UpdateEditionDrop => SolanaNftEvent::UpdateEditionDropFailed(tx),
             Self::TransferAsset => SolanaNftEvent::TransferAssetFailed(tx),
-            Self::RetryCreateDrop => SolanaNftEvent::RetryCreateDropFailed(tx),
-            Self::RetryMintDrop => SolanaNftEvent::RetryMintDropFailed(tx),
+            Self::RetryCreateEditionDrop => SolanaNftEvent::RetryCreateEditionDropFailed(tx),
+            Self::RetryMintEditionDrop => SolanaNftEvent::RetryMintEditionDropFailed(tx),
             Self::CreateCollection => SolanaNftEvent::CreateCollectionFailed(tx),
             Self::RetryCreateCollection => SolanaNftEvent::RetryCreateCollectionFailed(tx),
             Self::UpdateCollection => SolanaNftEvent::UpdateCollectionFailed(tx),
@@ -340,6 +409,11 @@ impl EventKind {
             Self::UpdateCollectionMint => SolanaNftEvent::UpdateCollectionMintFailed(tx),
             Self::RetryUpdateCollectionMint => SolanaNftEvent::RetryUpdateMintFailed(tx),
             Self::SwitchMintCollection => SolanaNftEvent::SwitchMintCollectionFailed(tx),
+            Self::CreateOpenDrop => SolanaNftEvent::CreateOpenDropFailed(tx),
+            Self::MintOpenDrop => SolanaNftEvent::MintOpenDropFailed(tx),
+            Self::UpdateOpenDrop => SolanaNftEvent::UpdateOpenDropFailed(tx),
+            Self::RetryCreateOpenDrop => SolanaNftEvent::RetryCreateOpenDropFailed(tx),
+            Self::RetryMintOpenDrop => SolanaNftEvent::RetryMintOpenDropFailed(tx),
         }
     }
 }
@@ -349,16 +423,23 @@ pub struct Processor {
     solana: DebugShim<Solana>,
     db: db::Connection,
     producer: Producer<SolanaNftEvents>,
+    metrics: Metrics,
 }
 
 impl Processor {
     #[inline]
     #[must_use]
-    pub fn new(solana: Solana, db: db::Connection, producer: Producer<SolanaNftEvents>) -> Self {
+    pub fn new(
+        solana: Solana,
+        db: db::Connection,
+        producer: Producer<SolanaNftEvents>,
+        metrics: Metrics,
+    ) -> Self {
         Self {
             solana: DebugShim(solana),
             db,
             producer,
+            metrics,
         }
     }
 
@@ -373,9 +454,9 @@ impl Processor {
                 let key = SolanaNftEventKey::from(key);
 
                 match msg.event {
-                    Some(NftEvent::SolanaCreateDrop(payload)) => {
+                    Some(NftEvent::SolanaCreateEditionDrop(payload)) => {
                         self.process_nft(
-                            EventKind::CreateDrop,
+                            EventKind::CreateEditionDrop,
                             &key,
                             self.create_collection(&UncompressedRef(self.solana()), &key, payload),
                         )
@@ -389,9 +470,9 @@ impl Processor {
                         )
                         .await
                     },
-                    Some(NftEvent::SolanaMintDrop(payload)) => {
+                    Some(NftEvent::SolanaMintEditionDrop(payload)) => {
                         self.process_nft(
-                            EventKind::MintDrop,
+                            EventKind::MintEditionDrop,
                             &key,
                             self.mint_drop(&EditionRef(self.solana()), &key, payload),
                         )
@@ -405,9 +486,9 @@ impl Processor {
                         )
                         .await
                     },
-                    Some(NftEvent::SolanaUpdateDrop(payload)) => {
+                    Some(NftEvent::SolanaUpdateEditionDrop(payload)) => {
                         self.process_nft(
-                            EventKind::UpdateDrop,
+                            EventKind::UpdateEditionDrop,
                             &key,
                             self.update_collection(&UncompressedRef(self.solana()), &key, payload),
                         )
@@ -429,9 +510,9 @@ impl Processor {
                         )
                         .await
                     },
-                    Some(NftEvent::SolanaRetryDrop(payload)) => {
+                    Some(NftEvent::SolanaRetryEditionDrop(payload)) => {
                         self.process_nft(
-                            EventKind::RetryCreateDrop,
+                            EventKind::RetryCreateEditionDrop,
                             &key,
                             self.retry_create_collection(
                                 &UncompressedRef(self.solana()),
@@ -453,9 +534,9 @@ impl Processor {
                         )
                         .await
                     },
-                    Some(NftEvent::SolanaRetryMintDrop(payload)) => {
+                    Some(NftEvent::SolanaRetryMintEditionDrop(payload)) => {
                         self.process_nft(
-                            EventKind::RetryMintDrop,
+                            EventKind::RetryMintEditionDrop,
                             &key,
                             self.retry_mint_drop(&EditionRef(self.solana()), &key, payload),
                         )
@@ -504,7 +585,54 @@ impl Processor {
                         )
                         .await
                     },
-
+                    Some(NftEvent::SolanaCreateOpenDrop(payload)) => {
+                        self.process_nft(
+                            EventKind::CreateOpenDrop,
+                            &key,
+                            self.create_collection(&UncompressedRef(self.solana()), &key, payload),
+                        )
+                        .await
+                    },
+                    Some(NftEvent::SolanaMintOpenDrop(payload)) => {
+                        self.process_nft(
+                            EventKind::MintOpenDrop,
+                            &key,
+                            self.mint_to_collection(&key, payload),
+                        )
+                        .await
+                    },
+                    Some(NftEvent::SolanaUpdateOpenDrop(payload)) => {
+                        self.process_nft(
+                            EventKind::UpdateOpenDrop,
+                            &key,
+                            self.update_collection(&UncompressedRef(self.solana()), &key, payload),
+                        )
+                        .await
+                    },
+                    Some(NftEvent::SolanaRetryOpenDrop(payload)) => {
+                        self.process_nft(
+                            EventKind::RetryCreateOpenDrop,
+                            &key,
+                            self.retry_create_collection(
+                                &UncompressedRef(self.solana()),
+                                &key,
+                                payload,
+                            ),
+                        )
+                        .await
+                    },
+                    Some(NftEvent::SolanaRetryMintOpenDrop(payload)) => {
+                        self.process_nft(
+                            EventKind::RetryMintOpenDrop,
+                            &key,
+                            self.retry_mint_to_collection(
+                                &UncompressedRef(self.solana()),
+                                &key,
+                                payload,
+                            ),
+                        )
+                        .await
+                    },
                     _ => Ok(()),
                 }
             },
@@ -512,25 +640,28 @@ impl Processor {
                 let key = SolanaNftEventKey::from(key);
 
                 match msg.event {
-                    Some(TreasuryEvent::SolanaCreateDropSigned(res)) => {
-                        self.process_treasury(EventKind::CreateDrop, key, res).await
+                    Some(TreasuryEvent::SolanaCreateEditionDropSigned(res)) => {
+                        self.process_treasury(EventKind::CreateEditionDrop, key, res)
+                            .await
                     },
-                    Some(TreasuryEvent::SolanaMintDropSigned(res)) => {
-                        self.process_treasury(EventKind::MintDrop, key, res).await
+                    Some(TreasuryEvent::SolanaMintEditionDropSigned(res)) => {
+                        self.process_treasury(EventKind::MintEditionDrop, key, res)
+                            .await
                     },
-                    Some(TreasuryEvent::SolanaUpdateDropSigned(res)) => {
-                        self.process_treasury(EventKind::UpdateDrop, key, res).await
+                    Some(TreasuryEvent::SolanaUpdateEditionDropSigned(res)) => {
+                        self.process_treasury(EventKind::UpdateEditionDrop, key, res)
+                            .await
                     },
                     Some(TreasuryEvent::SolanaTransferAssetSigned(res)) => {
                         self.process_treasury(EventKind::TransferAsset, key, res)
                             .await
                     },
-                    Some(TreasuryEvent::SolanaRetryCreateDropSigned(res)) => {
-                        self.process_treasury(EventKind::RetryCreateDrop, key, res)
+                    Some(TreasuryEvent::SolanaRetryCreateEditionDropSigned(res)) => {
+                        self.process_treasury(EventKind::RetryCreateEditionDrop, key, res)
                             .await
                     },
-                    Some(TreasuryEvent::SolanaRetryMintDropSigned(res)) => {
-                        self.process_treasury(EventKind::RetryMintDrop, key, res)
+                    Some(TreasuryEvent::SolanaRetryMintEditionDropSigned(res)) => {
+                        self.process_treasury(EventKind::RetryMintEditionDrop, key, res)
                             .await
                     },
                     Some(TreasuryEvent::SolanaMintToCollectionSigned(res)) => {
@@ -563,6 +694,26 @@ impl Processor {
                     },
                     Some(TreasuryEvent::SolanaSwitchMintCollectionSigned(res)) => {
                         self.process_treasury(EventKind::SwitchMintCollection, key, res)
+                            .await
+                    },
+                    Some(TreasuryEvent::SolanaCreateOpenDropSigned(res)) => {
+                        self.process_treasury(EventKind::CreateOpenDrop, key, res)
+                            .await
+                    },
+                    Some(TreasuryEvent::SolanaMintOpenDropSigned(res)) => {
+                        self.process_treasury(EventKind::MintOpenDrop, key, res)
+                            .await
+                    },
+                    Some(TreasuryEvent::SolanaUpdateOpenDropSigned(res)) => {
+                        self.process_treasury(EventKind::UpdateOpenDrop, key, res)
+                            .await
+                    },
+                    Some(TreasuryEvent::SolanaRetryCreateOpenDropSigned(res)) => {
+                        self.process_treasury(EventKind::RetryCreateOpenDrop, key, res)
+                            .await
+                    },
+                    Some(TreasuryEvent::SolanaRetryMintOpenDropSigned(res)) => {
+                        self.process_treasury(EventKind::RetryMintOpenDrop, key, res)
                             .await
                     },
                     _ => Ok(()),
@@ -606,6 +757,7 @@ impl Processor {
         key: SolanaNftEventKey,
         res: SolanaTransactionResult,
     ) -> Result<()> {
+        let start = Instant::now();
         let status = TransactionStatus::from_i32(res.status).ok_or_else(|| {
             ProcessorError::new(
                 ProcessorErrorKind::TransactionStatusNotFound,
@@ -621,7 +773,7 @@ impl Processor {
                 .map_err(|k| ProcessorError::new(k, kind, ErrorSource::TreasuryStatus));
         }
 
-        match self.solana().submit_transaction(&res) {
+        let res = match self.solana().submit_transaction(&res) {
             Ok(sig) => self
                 .event_submitted(kind, &key, sig)
                 .await
@@ -635,7 +787,13 @@ impl Processor {
                     .await
                     .map_err(|k| ProcessorError::new(k, kind, ErrorSource::TreasuryFailure))
             },
-        }
+        };
+        let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(0);
+
+        self.metrics
+            .rpc_tx_submission_duration_ms_bucket
+            .record(elapsed, &[KeyValue::new("blockchain", "Solana")]);
+        res
     }
 
     async fn event_submitted(
@@ -717,6 +875,7 @@ impl Processor {
         key: &SolanaNftEventKey,
         payload: MintMetaplexMetadataTransaction,
     ) -> ProcessResult<SolanaPendingTransaction> {
+        let start = Instant::now();
         let conn = self.db.get();
         let id = Uuid::parse_str(&key.id.clone())?;
         let collection_id = Uuid::parse_str(&payload.collection_id)?;
@@ -743,6 +902,14 @@ impl Processor {
             };
 
             CompressionLeaf::create(conn, compression_leaf).await?;
+            let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(0);
+
+            self.metrics
+                .rpc_tx_assembly_duration_ms_bucket
+                .record(elapsed, &[
+                    KeyValue::new("blockchain", "Solana"),
+                    KeyValue::new("compressed", "true"),
+                ]);
 
             return Ok(tx.into());
         }
@@ -763,6 +930,14 @@ impl Processor {
         };
 
         CollectionMint::create(conn, collection_mint).await?;
+        let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(0);
+
+        self.metrics
+            .rpc_tx_assembly_duration_ms_bucket
+            .record(elapsed, &[
+                KeyValue::new("blockchain", "Solana"),
+                KeyValue::new("compressed", "false"),
+            ]);
 
         Ok(tx.into())
     }
