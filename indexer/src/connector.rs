@@ -2,6 +2,7 @@ use std::{collections::HashMap, vec};
 
 use futures::{channel::mpsc::SendError, Sink, Stream};
 use hub_core::prelude::*;
+use solana_program::pubkey::Pubkey;
 use yellowstone_grpc_client::GeyserGrpcClient;
 use yellowstone_grpc_proto::{prelude::*, tonic::Status};
 
@@ -29,7 +30,7 @@ impl GeyserGrpcConnector {
         Ok((subscribe_tx, stream))
     }
 
-    pub fn build_request() -> SubscribeRequest {
+    pub fn build_request(program_id: Pubkey) -> SubscribeRequest {
         let mut slots = HashMap::new();
         slots.insert("client".to_owned(), SubscribeRequestFilterSlots {});
 
@@ -38,20 +39,16 @@ impl GeyserGrpcConnector {
             vote: Some(false),
             failed: Some(false),
             signature: None,
-            account_include: vec![spl_token::ID.to_string(), mpl_bubblegum::ID.to_string()],
+            account_include: vec![program_id.to_string()],
             account_exclude: Vec::new(),
             account_required: Vec::new(),
         });
 
         SubscribeRequest {
-            accounts: HashMap::new(),
             slots,
             transactions,
-            blocks: HashMap::new(),
-            blocks_meta: HashMap::new(),
             commitment: Some(CommitmentLevel::Finalized as i32),
-            accounts_data_slice: vec![],
-            entry: HashMap::new(),
+            ..Default::default()
         }
     }
 }
