@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use holaplex_hub_nfts_solana_core::{
     db,
     proto::{
@@ -19,6 +21,7 @@ use holaplex_hub_nfts_solana_entity::{
 };
 use hub_core::{
     chrono::Utc,
+    metrics::KeyValue,
     prelude::*,
     producer::{Producer, SendError},
     thiserror,
@@ -34,6 +37,7 @@ use crate::{
         CollectionBackend, MasterEditionAddresses, MintBackend, MintEditionAddresses,
         MintMetaplexAddresses, TransferBackend, UpdateCollectionMintAddresses,
     },
+    metrics::Metrics,
     solana::{CompressedRef, EditionRef, Solana, SolanaAssetIdError, UncompressedRef},
 };
 
@@ -419,16 +423,23 @@ pub struct Processor {
     solana: DebugShim<Solana>,
     db: db::Connection,
     producer: Producer<SolanaNftEvents>,
+    metrics: Metrics,
 }
 
 impl Processor {
     #[inline]
     #[must_use]
-    pub fn new(solana: Solana, db: db::Connection, producer: Producer<SolanaNftEvents>) -> Self {
+    pub fn new(
+        solana: Solana,
+        db: db::Connection,
+        producer: Producer<SolanaNftEvents>,
+        metrics: Metrics,
+    ) -> Self {
         Self {
             solana: DebugShim(solana),
             db,
             producer,
+            metrics,
         }
     }
 
@@ -746,6 +757,7 @@ impl Processor {
         key: SolanaNftEventKey,
         res: SolanaTransactionResult,
     ) -> Result<()> {
+        let start = Instant::now();
         let status = TransactionStatus::from_i32(res.status).ok_or_else(|| {
             ProcessorError::new(
                 ProcessorErrorKind::TransactionStatusNotFound,
@@ -761,7 +773,7 @@ impl Processor {
                 .map_err(|k| ProcessorError::new(k, kind, ErrorSource::TreasuryStatus));
         }
 
-        match self.solana().submit_transaction(&res) {
+        let res = match self.solana().submit_transaction(&res) {
             Ok(sig) => self
                 .event_submitted(kind, &key, sig)
                 .await
@@ -775,7 +787,13 @@ impl Processor {
                     .await
                     .map_err(|k| ProcessorError::new(k, kind, ErrorSource::TreasuryFailure))
             },
-        }
+        };
+        let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(0);
+
+        self.metrics
+            .rpc_tx_submission_duration_ms_bucket
+            .record(elapsed, &[KeyValue::new("blockchain", "Solana")]);
+        res
     }
 
     async fn event_submitted(
@@ -857,6 +875,7 @@ impl Processor {
         key: &SolanaNftEventKey,
         payload: MintMetaplexMetadataTransaction,
     ) -> ProcessResult<SolanaPendingTransaction> {
+        let start = Instant::now();
         let conn = self.db.get();
         let id = Uuid::parse_str(&key.id.clone())?;
         let collection_id = Uuid::parse_str(&payload.collection_id)?;
@@ -883,6 +902,14 @@ impl Processor {
             };
 
             CompressionLeaf::create(conn, compression_leaf).await?;
+            let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(0);
+
+            self.metrics
+                .rpc_tx_assembly_duration_ms_bucket
+                .record(elapsed, &[
+                    KeyValue::new("blockchain", "Solana"),
+                    KeyValue::new("compressed", "true"),
+                ]);
 
             return Ok(tx.into());
         }
@@ -903,6 +930,14 @@ impl Processor {
         };
 
         CollectionMint::create(conn, collection_mint).await?;
+        let elapsed = i64::try_from(start.elapsed().as_millis()).unwrap_or(0);
+
+        self.metrics
+            .rpc_tx_assembly_duration_ms_bucket
+            .record(elapsed, &[
+                KeyValue::new("blockchain", "Solana"),
+                KeyValue::new("compressed", "false"),
+            ]);
 
         Ok(tx.into())
     }
