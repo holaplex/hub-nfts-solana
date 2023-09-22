@@ -25,7 +25,10 @@ use mpl_token_metadata::{
     },
     state::{Creator, DataV2, EDITION, PREFIX},
 };
-use solana_client::rpc_client::RpcClient as SolanaRpcClient;
+use solana_client::{
+    client_error::{ClientError, ClientErrorKind},
+    rpc_client::RpcClient as SolanaRpcClient,
+};
 use solana_program::{
     instruction::Instruction, program_pack::Pack, pubkey::Pubkey,
     system_instruction::create_account, system_program,
@@ -33,7 +36,7 @@ use solana_program::{
 use solana_sdk::{
     signature::Signature,
     signer::{keypair::Keypair, Signer},
-    transaction::Transaction,
+    transaction::{Transaction, TransactionError},
 };
 use solana_transaction_status::{UiInnerInstructions, UiInstruction, UiTransactionEncoding};
 use spl_account_compression::{
@@ -68,6 +71,9 @@ macro_rules! call_with_retry {
                     .with_min_delay(Duration::from_millis(30))
                     .with_max_times(10),
             )
+            .notify(|err: &ClientError, dur: Duration| {
+                error!("retrying error {:?} in {:?}", err, dur);
+            })
             .call()
     }};
 }
@@ -247,10 +253,7 @@ impl Solana {
         let signatures = transaction
             .signed_message_signatures
             .iter()
-            .map(|s| {
-                Signature::from_str(s)
-                    .map_err(|e| anyhow!(format!("failed to parse signature: {e}")))
-            })
+            .map(|s| Signature::from_str(s).context("failed to parse signature"))
             .collect::<Result<Vec<Signature>>>()?;
 
         let message = bincode::deserialize(
@@ -265,13 +268,40 @@ impl Solana {
             message,
         };
 
-        call_with_retry!(self.rpc().send_and_confirm_transaction(&transaction))
-            .map(|s| s.to_string())
-            .map_err(|e| {
-                let msg = format!("failed to submit transaction: {e}");
+        let signature =
+            call_with_retry!(self.rpc().send_transaction(&transaction)).map_err(|e| {
+                let msg = format!("failed to send transaction: {e}");
                 error!(msg);
                 anyhow!(msg)
-            })
+            })?;
+
+       let signature = (|| {
+            let status = self
+                .rpc()
+                .get_signature_status(&signature)
+                .map_err(|e| e.kind)?;
+
+            match status {
+                Some(Ok(_)) => Ok(signature),
+                Some(Err(e)) => Err(ClientErrorKind::TransactionError(e)),
+                None => Err(TransactionError::BlockhashNotFound.into()),
+            }
+        })
+        .retry(
+            &ExponentialBuilder::default()
+                .with_jitter()
+                .with_min_delay(Duration::from_millis(10))
+                .with_max_times(15),
+        )
+        .when(|e| e.get_transaction_error() == Some(TransactionError::BlockhashNotFound))
+        .notify(|err: &ClientErrorKind, dur: Duration| {
+            error!("retrying error {:?} in {:?}", err, dur);
+        })
+        .call()?;
+
+    Ok(signature.to_string())
+
+        
     }
 }
 
