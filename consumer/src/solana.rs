@@ -275,15 +275,14 @@ impl Solana {
                 anyhow!(msg)
             })?;
 
-       let signature = (|| {
+        (|| {
             let status = self
                 .rpc()
                 .get_signature_status(&signature)
                 .map_err(|e| e.kind)?;
 
             match status {
-                Some(Ok(_)) => Ok(signature),
-                Some(Err(e)) => Err(ClientErrorKind::TransactionError(e)),
+                Some(result) => result.map_err(ClientErrorKind::TransactionError),
                 None => Err(TransactionError::BlockhashNotFound.into()),
             }
         })
@@ -293,15 +292,16 @@ impl Solana {
                 .with_min_delay(Duration::from_millis(10))
                 .with_max_times(15),
         )
-        .when(|e| e.get_transaction_error() == Some(TransactionError::BlockhashNotFound))
+        .when(|e| {
+            e.get_transaction_error() == Some(TransactionError::BlockhashNotFound)
+                || e.get_transaction_error().is_none()
+        })
         .notify(|err: &ClientErrorKind, dur: Duration| {
             error!("retrying error {:?} in {:?}", err, dur);
         })
         .call()?;
 
-    Ok(signature.to_string())
-
-        
+        Ok(signature.to_string())
     }
 }
 
