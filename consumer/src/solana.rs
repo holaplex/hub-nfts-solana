@@ -289,7 +289,7 @@ impl Solana {
         .retry(
             &ExponentialBuilder::default()
                 .with_jitter()
-                .with_min_delay(Duration::from_millis(10))
+                .with_min_delay(Duration::from_millis(200))
                 .with_max_times(15),
         )
         .when(|e| {
