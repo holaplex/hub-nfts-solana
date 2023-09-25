@@ -25,10 +25,7 @@ use mpl_token_metadata::{
     },
     state::{Creator, DataV2, EDITION, PREFIX},
 };
-use solana_client::{
-    client_error::{ClientError, ClientErrorKind},
-    rpc_client::RpcClient as SolanaRpcClient,
-};
+use solana_client::{client_error::ClientError, rpc_client::RpcClient as SolanaRpcClient};
 use solana_program::{
     instruction::Instruction, program_pack::Pack, pubkey::Pubkey,
     system_instruction::create_account, system_program,
@@ -36,7 +33,7 @@ use solana_program::{
 use solana_sdk::{
     signature::Signature,
     signer::{keypair::Keypair, Signer},
-    transaction::{Transaction, TransactionError},
+    transaction::Transaction,
 };
 use solana_transaction_status::{UiInnerInstructions, UiInstruction, UiTransactionEncoding};
 use spl_account_compression::{
@@ -268,38 +265,11 @@ impl Solana {
             message,
         };
 
-        let signature =
-            call_with_retry!(self.rpc().send_transaction(&transaction)).map_err(|e| {
-                let msg = format!("failed to send transaction: {e}");
-                error!(msg);
-                anyhow!(msg)
-            })?;
-
-        (|| {
-            let status = self
-                .rpc()
-                .get_signature_status(&signature)
-                .map_err(|e| e.kind)?;
-
-            match status {
-                Some(result) => result.map_err(ClientErrorKind::TransactionError),
-                None => Err(TransactionError::BlockhashNotFound.into()),
-            }
-        })
-        .retry(
-            &ExponentialBuilder::default()
-                .with_jitter()
-                .with_min_delay(Duration::from_millis(200))
-                .with_max_times(15),
-        )
-        .when(|e| {
-            e.get_transaction_error() == Some(TransactionError::BlockhashNotFound)
-                || e.get_transaction_error().is_none()
-        })
-        .notify(|err: &ClientErrorKind, dur: Duration| {
-            error!("retrying error {:?} in {:?}", err, dur);
-        })
-        .call()?;
+        let signature = self.rpc().send_transaction(&transaction).map_err(|e| {
+            let msg = format!("failed to send transaction: {e}");
+            error!(msg);
+            anyhow!(msg)
+        })?;
 
         Ok(signature.to_string())
     }
