@@ -66,7 +66,7 @@ macro_rules! call_with_retry {
                 &ExponentialBuilder::default()
                     .with_jitter()
                     .with_min_delay(Duration::from_millis(30))
-                    .with_max_times(10),
+                    .with_max_times(15),
             )
             .notify(|err: &ClientError, dur: Duration| {
                 error!("retrying error {:?} in {:?}", err, dur);
@@ -204,9 +204,10 @@ impl Solana {
         &self,
         signature: &Signature,
     ) -> Result<u32, SolanaAssetIdError> {
-        let response = self
-            .rpc()
-            .get_transaction(signature, UiTransactionEncoding::Json)?;
+        let response = call_with_retry!(
+            self.rpc()
+                .get_transaction(signature, UiTransactionEncoding::Json)
+        )?;
 
         let meta = response
             .transaction
