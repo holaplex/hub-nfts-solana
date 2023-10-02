@@ -135,9 +135,12 @@ impl Processor {
                 let asset_id = get_asset_id(&merkle_tree, tkn_instruction.nonce);
 
                 let compression_leaf =
-                    CompressionLeaf::find_by_asset_id(conn, asset_id.to_string())
-                        .await?
-                        .context("compression leaf not found")?;
+                    CompressionLeaf::find_by_asset_id(conn, asset_id.to_string()).await?;
+
+                if compression_leaf.is_none() {
+                    return Ok(());
+                }
+                let compression_leaf = compression_leaf.context("Compression leaf not found")?;
 
                 let collection_mint_id = compression_leaf.id;
                 let leaf_owner = compression_leaf.leaf_owner.clone();
