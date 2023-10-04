@@ -29,7 +29,6 @@ dashmap = "5.4.0"
 spl-token = "=3.5.0"
 solana-client = "1.14"
 backoff = { version = "0.4.0", features = ["tokio"] }
-crossbeam = "0.8.2"
 
 [dependencies.hub-core]
 package = "holaplex-hub-core"

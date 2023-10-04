@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crossbeam::channel::{self, Receiver, Sender};
 use dashmap::DashMap;
 use futures::{sink::SinkExt, stream::StreamExt};
 use holaplex_hub_nfts_solana_core::{db::Connection, proto::SolanaNftEvents};
@@ -10,6 +9,10 @@ use hub_core::{
     producer::Producer,
     tokio::{
         self,
+        sync::{
+            mpsc::{self, UnboundedReceiver, UnboundedSender},
+            Mutex,
+        },
         task::{self, JoinSet},
     },
 };
@@ -25,9 +28,8 @@ use crate::{processor::Processor, Args, GeyserGrpcConnector};
 pub struct MessageHandler {
     connector: GeyserGrpcConnector,
     processor: Processor,
-    dashmap: DashMap<u64, Vec<SubscribeUpdateTransaction>>,
-    tx: Sender<SubscribeUpdateTransaction>,
-    rx: Receiver<SubscribeUpdateTransaction>,
+    tx: UnboundedSender<SubscribeUpdateTransaction>,
+    rx: Arc<Mutex<UnboundedReceiver<SubscribeUpdateTransaction>>>,
     parallelism: usize,
 }
 
@@ -47,15 +49,14 @@ impl MessageHandler {
 
         let rpc = Arc::new(RpcClient::new(solana_endpoint));
         let connector = GeyserGrpcConnector::new(dragon_mouth_endpoint, dragon_mouth_x_token);
-        let (tx, rx) = channel::unbounded();
+        let (tx, rx) = mpsc::unbounded_channel();
         let processor = Processor::new(db, rpc, producer);
 
         Ok(Self {
             connector,
             processor,
-            dashmap: DashMap::new(),
             tx,
-            rx,
+            rx: Arc::new(Mutex::new(rx)),
             parallelism,
         })
     }
@@ -63,7 +64,7 @@ impl MessageHandler {
     async fn connect(&self, request: SubscribeRequest) -> Result<()> {
         (|| async {
             let (mut subscribe_tx, mut stream) = self.connector.subscribe().await?;
-
+            let dashmap = DashMap::new();
             subscribe_tx
                 .send(request.clone())
                 .await
@@ -73,10 +74,10 @@ impl MessageHandler {
                 match message {
                     Ok(msg) => match msg.update_oneof {
                         Some(UpdateOneof::Transaction(tx)) => {
-                            self.dashmap.entry(tx.slot).or_insert(Vec::new()).push(tx);
+                            dashmap.entry(tx.slot).or_insert(Vec::new()).push(tx);
                         },
                         Some(UpdateOneof::Slot(slot)) => {
-                            if let Some((_, transactions)) = self.dashmap.remove(&slot.slot) {
+                            if let Some((_, transactions)) = dashmap.remove(&slot.slot) {
                                 for tx in transactions {
                                     self.tx.send(tx)?;
                                 }
@@ -119,7 +120,6 @@ impl MessageHandler {
             }
         });
 
-        let rx = self.rx.clone();
         let processor = self.processor;
 
         let process_task = task::spawn(async move {
@@ -127,22 +127,22 @@ impl MessageHandler {
 
             loop {
                 let processor = processor.clone();
+                let mut rx = self.rx.lock().await;
 
                 while set.len() >= self.parallelism {
                     match set.join_next().await {
-                        Some(Err(e)) => bail!("failed to join task {:?}", e),
+                        Some(Err(e)) => {
+                            return Result::<(), Error>::Err(anyhow!(
+                                "failed to join task {:?}",
+                                e
+                            ));
+                        },
                         Some(Ok(_)) | None => (),
                     }
                 }
 
-                match rx.recv() {
-                    Ok(tx) => {
-                        set.spawn(processor.process_transaction(tx));
-                    },
-                    Err(e) => {
-                        error!("{:?}", e);
-                        return Result::<(), Error>::Err(e.into());
-                    },
+                if let Some(tx) = rx.recv().await {
+                    set.spawn(processor.process_transaction(tx));
                 }
             }
         });
