@@ -18,6 +18,9 @@ pub struct Args {
     #[arg(long, env)]
     pub solana_endpoint: String,
 
+    #[arg(long, short = 'p', env, default_value_t = 8)]
+    pub parallelism: usize,
+
     #[command(flatten)]
     pub db: db::DbArgs,
 }

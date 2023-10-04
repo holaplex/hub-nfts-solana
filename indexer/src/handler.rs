@@ -1,16 +1,23 @@
 use std::sync::Arc;
 
+use crossbeam::channel::{self, Receiver, Sender};
+use dashmap::DashMap;
 use futures::{sink::SinkExt, stream::StreamExt};
 use holaplex_hub_nfts_solana_core::{db::Connection, proto::SolanaNftEvents};
 use hub_core::{
     backon::{ExponentialBuilder, Retryable},
     prelude::*,
     producer::Producer,
-    tokio,
+    tokio::{
+        self,
+        task::{self, JoinSet},
+    },
 };
 use solana_client::rpc_client::RpcClient;
 use yellowstone_grpc_client::GeyserGrpcClientError;
-use yellowstone_grpc_proto::prelude::SubscribeRequest;
+use yellowstone_grpc_proto::prelude::{
+    subscribe_update::UpdateOneof, SubscribeRequest, SubscribeUpdateTransaction,
+};
 
 use crate::{processor::Processor, Args, GeyserGrpcConnector};
 
@@ -18,6 +25,10 @@ use crate::{processor::Processor, Args, GeyserGrpcConnector};
 pub struct MessageHandler {
     connector: GeyserGrpcConnector,
     processor: Processor,
+    dashmap: DashMap<u64, Vec<SubscribeUpdateTransaction>>,
+    tx: Sender<SubscribeUpdateTransaction>,
+    rx: Receiver<SubscribeUpdateTransaction>,
+    parallelism: usize,
 }
 
 impl MessageHandler {
@@ -26,6 +37,7 @@ impl MessageHandler {
             dragon_mouth_endpoint,
             dragon_mouth_x_token,
             solana_endpoint,
+            parallelism,
             db,
         } = args;
 
@@ -35,12 +47,16 @@ impl MessageHandler {
 
         let rpc = Arc::new(RpcClient::new(solana_endpoint));
         let connector = GeyserGrpcConnector::new(dragon_mouth_endpoint, dragon_mouth_x_token);
-
+        let (tx, rx) = channel::unbounded();
         let processor = Processor::new(db, rpc, producer);
 
         Ok(Self {
             connector,
             processor,
+            dashmap: DashMap::new(),
+            tx,
+            rx,
+            parallelism,
         })
     }
 
@@ -54,9 +70,23 @@ impl MessageHandler {
                 .map_err(GeyserGrpcClientError::SubscribeSendError)?;
 
             while let Some(message) = stream.next().await {
-                self.processor.process(message).await?;
+                match message {
+                    Ok(msg) => match msg.update_oneof {
+                        Some(UpdateOneof::Transaction(tx)) => {
+                            self.dashmap.entry(tx.slot).or_insert(Vec::new()).push(tx);
+                        },
+                        Some(UpdateOneof::Slot(slot)) => {
+                            if let Some((_, transactions)) = self.dashmap.remove(&slot.slot) {
+                                for tx in transactions {
+                                    self.tx.send(tx)?;
+                                }
+                            }
+                        },
+                        _ => {},
+                    },
+                    Err(error) => bail!("stream error: {:?}", error),
+                };
             }
-
             Ok(())
         })
         .retry(
@@ -81,9 +111,39 @@ impl MessageHandler {
         });
 
         let mpl_bubblegum_stream = tokio::spawn({
+            let handler = self.clone();
             async move {
-                self.connect(GeyserGrpcConnector::build_request(mpl_bubblegum::ID))
+                handler
+                    .connect(GeyserGrpcConnector::build_request(mpl_bubblegum::ID))
                     .await
+            }
+        });
+
+        let rx = self.rx.clone();
+        let processor = self.processor;
+
+        let process_task = task::spawn(async move {
+            let mut set = JoinSet::new();
+
+            loop {
+                let processor = processor.clone();
+
+                while set.len() >= self.parallelism {
+                    match set.join_next().await {
+                        Some(Err(e)) => bail!("failed to join task {:?}", e),
+                        Some(Ok(_)) | None => (),
+                    }
+                }
+
+                match rx.recv() {
+                    Ok(tx) => {
+                        set.spawn(processor.process_transaction(tx));
+                    },
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return Result::<(), Error>::Err(e.into());
+                    },
+                }
             }
         });
 
@@ -93,6 +153,9 @@ impl MessageHandler {
             },
             Err(e) = mpl_bubblegum_stream => {
                 bail!("mpl bumblegum stream error: {:?}", e)
+            }
+            Err(e) = process_task => {
+                bail!("Receiver err: {:?}", e)
             }
         }
     }

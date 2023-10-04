@@ -12,7 +12,7 @@ pub struct DbArgs {
     pub connection_timeout: u64,
     #[arg(long, env, default_value_t = 10)]
     pub acquire_timeout: u64,
-    #[arg(long, env, default_value_t = 60)]
+    #[arg(long, env, default_value_t = 10)]
     pub idle_timeout: u64,
     #[arg(long, env)]
     pub database_url: String,
