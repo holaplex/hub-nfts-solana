@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use dashmap::DashMap;
 use futures::{sink::SinkExt, stream::StreamExt};
 use holaplex_hub_nfts_solana_core::{db::Connection, proto::SolanaNftEvents};
 use hub_core::{
@@ -64,7 +63,7 @@ impl MessageHandler {
     async fn connect(&self, request: SubscribeRequest) -> Result<()> {
         (|| async {
             let (mut subscribe_tx, mut stream) = self.connector.subscribe().await?;
-            let dashmap = DashMap::new();
+            let mut hashmap = std::collections::HashMap::new();
             subscribe_tx
                 .send(request.clone())
                 .await
@@ -74,10 +73,10 @@ impl MessageHandler {
                 match message {
                     Ok(msg) => match msg.update_oneof {
                         Some(UpdateOneof::Transaction(tx)) => {
-                            dashmap.entry(tx.slot).or_insert(Vec::new()).push(tx);
+                            hashmap.entry(tx.slot).or_insert(Vec::new()).push(tx);
                         },
                         Some(UpdateOneof::Slot(slot)) => {
-                            if let Some((_, transactions)) = dashmap.remove(&slot.slot) {
+                            if let Some(transactions) = hashmap.remove(&slot.slot) {
                                 for tx in transactions {
                                     self.tx.send(tx)?;
                                 }
