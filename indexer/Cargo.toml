@@ -25,9 +25,11 @@ solana-program = "1.14"
 anchor-lang = "0.26.0"
 yellowstone-grpc-client = { git = "https://github.com/rpcpool/yellowstone-grpc", tag = "v1.7.1+solana.1.16.1" }
 yellowstone-grpc-proto = { git = "https://github.com/rpcpool/yellowstone-grpc", tag = "v1.7.1+solana.1.16.1" }
+dashmap = "5.4.0"
 spl-token = "=3.5.0"
 solana-client = "1.14"
 backoff = { version = "0.4.0", features = ["tokio"] }
+
 
 [dependencies.hub-core]
 package = "holaplex-hub-core"

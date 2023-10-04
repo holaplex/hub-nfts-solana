@@ -2,6 +2,7 @@ use std::{convert::TryInto, sync::Arc};
 
 use anchor_lang::AnchorDeserialize;
 use backoff::ExponentialBackoff;
+use dashmap::DashMap;
 use holaplex_hub_nfts_solana_core::{
     db::Connection,
     proto::{
@@ -12,19 +13,25 @@ use holaplex_hub_nfts_solana_core::{
     CollectionMint, CompressionLeaf,
 };
 use holaplex_hub_nfts_solana_entity::compression_leafs;
-use hub_core::{prelude::*, producer::Producer};
+use hub_core::{prelude::*, producer::Producer, tokio::task};
 use mpl_bubblegum::utils::get_asset_id;
 use solana_client::rpc_client::RpcClient;
 use solana_program::program_pack::Pack;
 use solana_sdk::{pubkey::Pubkey, signature::Signature};
 use spl_token::{instruction::TokenInstruction, state::Account};
-use yellowstone_grpc_proto::prelude::{Message, SubscribeUpdateTransaction};
+use yellowstone_grpc_proto::{
+    prelude::{
+        subscribe_update::UpdateOneof, Message, SubscribeUpdate, SubscribeUpdateTransaction,
+    },
+    tonic::Status,
+};
 
 #[derive(Clone)]
 pub struct Processor {
     db: Connection,
     rpc: Arc<RpcClient>,
     producer: Producer<SolanaNftEvents>,
+    dashmap: DashMap<u64, Vec<SubscribeUpdateTransaction>>,
 }
 
 impl Processor {
@@ -33,7 +40,38 @@ impl Processor {
         rpc: Arc<RpcClient>,
         producer: Producer<SolanaNftEvents>,
     ) -> Self {
-        Self { db, rpc, producer }
+        Self {
+            db,
+            rpc,
+            producer,
+            dashmap: DashMap::new(),
+        }
+    }
+
+    pub(crate) async fn process(&self, message: Result<SubscribeUpdate, Status>) -> Result<()> {
+        match message {
+            Ok(msg) => match msg.update_oneof {
+                Some(UpdateOneof::Transaction(tx)) => {
+                    self.dashmap.entry(tx.slot).or_insert(Vec::new()).push(tx);
+                },
+                Some(UpdateOneof::Slot(slot)) => {
+                    if let Some((_, transactions)) = self.dashmap.remove(&slot.slot) {
+                        let handles: Vec<_> = transactions
+                            .into_iter()
+                            .map(|tx| task::spawn(self.clone().process_transaction(tx)))
+                            .collect();
+
+                        for handle in handles {
+                            handle.await??
+                        }
+                    }
+                },
+                _ => {},
+            },
+            Err(error) => bail!("stream error: {:?}", error),
+        };
+
+        Ok(())
     }
 
     pub(crate) async fn process_transaction(self, tx: SubscribeUpdateTransaction) -> Result<()> {
@@ -102,7 +140,6 @@ impl Processor {
                 if compression_leaf.is_none() {
                     return Ok(());
                 }
-
                 let compression_leaf = compression_leaf.context("Compression leaf not found")?;
 
                 let collection_mint_id = compression_leaf.id;
