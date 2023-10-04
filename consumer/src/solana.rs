@@ -25,7 +25,10 @@ use mpl_token_metadata::{
     },
     state::{Creator, DataV2, EDITION, PREFIX},
 };
-use solana_client::{client_error::ClientError, rpc_client::RpcClient as SolanaRpcClient};
+use solana_client::{
+    client_error::{ClientError, ClientErrorKind},
+    rpc_client::RpcClient as SolanaRpcClient,
+};
 use solana_program::{
     instruction::Instruction, program_pack::Pack, pubkey::Pubkey,
     system_instruction::create_account, system_program,
@@ -59,7 +62,7 @@ use crate::{
     },
 };
 
-macro_rules! call_with_retry {
+macro_rules! with_retry {
     ($expr:expr) => {{
         (|| $expr)
             .retry(
@@ -71,7 +74,6 @@ macro_rules! call_with_retry {
             .notify(|err: &ClientError, dur: Duration| {
                 error!("retrying error {:?} in {:?}", err, dur);
             })
-            .call()
     }};
 }
 
@@ -204,10 +206,11 @@ impl Solana {
         &self,
         signature: &Signature,
     ) -> Result<u32, SolanaAssetIdError> {
-        let response = call_with_retry!(
+        let response = with_retry!(
             self.rpc()
                 .get_transaction(signature, UiTransactionEncoding::Json)
-        )?;
+        )
+        .call()?;
 
         let meta = response
             .transaction
@@ -266,11 +269,19 @@ impl Solana {
             message,
         };
 
-        let signature = self.rpc().send_transaction(&transaction).map_err(|e| {
-            let msg = format!("failed to send transaction: {e}");
-            error!(msg);
-            anyhow!(msg)
-        })?;
+        let signature = with_retry!(self.rpc().send_and_confirm_transaction(&transaction))
+            .when(|e| {
+                !matches!(
+                    e.kind,
+                    ClientErrorKind::TransactionError(_) | ClientErrorKind::SigningError(_)
+                )
+            })
+            .call()
+            .map_err(|e| {
+                let msg = format!("failed to send transaction: {e}");
+                error!(msg);
+                anyhow!(msg)
+            })?;
 
         Ok(signature.to_string())
     }
@@ -324,8 +335,8 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
         );
         let len = spl_token::state::Mint::LEN;
 
-        let rent = call_with_retry!(rpc.get_minimum_balance_for_rent_exemption(len))?;
-        let blockhash = call_with_retry!(rpc.get_latest_blockhash())?;
+        let rent = with_retry!(rpc.get_minimum_balance_for_rent_exemption(len)).call()?;
+        let blockhash = with_retry!(rpc.get_latest_blockhash()).call()?;
 
         let create_account_ins = solana_program::system_instruction::create_account(
             &payer,
@@ -474,7 +485,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
             None,
         );
 
-        let blockhash = call_with_retry!(rpc.get_latest_blockhash())?;
+        let blockhash = with_retry!(rpc.get_latest_blockhash()).call()?;
 
         let message =
             solana_program::message::Message::new_with_blockhash(&[ins], Some(&payer), &blockhash);
@@ -526,7 +537,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
             &mpl_token_metadata::ID,
         );
 
-        let blockhash = call_with_retry!(rpc.get_latest_blockhash())?;
+        let blockhash = with_retry!(rpc.get_latest_blockhash()).call()?;
 
         let update_ins: Instruction = mpl_token_metadata::instruction::update_metadata_accounts_v2(
             mpl_token_metadata::ID,
@@ -589,7 +600,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
         let mut message: solana_program::message::Message =
             bincode::deserialize(&revision.serialized_message)?;
 
-        let blockhash = call_with_retry!(rpc.get_latest_blockhash())?;
+        let blockhash = with_retry!(rpc.get_latest_blockhash()).call()?;
         message.recent_blockhash = blockhash;
 
         Ok(TransactionResponse {
@@ -674,7 +685,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
 
         let instructions = vec![unverify_ins, verify_ins];
 
-        let blockhash = call_with_retry!(rpc.get_latest_blockhash())?;
+        let blockhash = with_retry!(rpc.get_latest_blockhash()).call()?;
 
         let message = solana_program::message::Message::new_with_blockhash(
             &instructions,
@@ -744,7 +755,8 @@ impl<'a> MintBackend<MintMetaplexEditionTransaction, MintEditionAddresses> for E
         ];
         let (metadata_key, _) = Pubkey::find_program_address(metadata_seeds, &program_pubkey);
 
-        let rent = call_with_retry!(rpc.get_minimum_balance_for_rent_exemption(state::Mint::LEN))?;
+        let rent =
+            with_retry!(rpc.get_minimum_balance_for_rent_exemption(state::Mint::LEN)).call()?;
 
         let mut instructions = vec![
             create_account(
@@ -782,7 +794,7 @@ impl<'a> MintBackend<MintMetaplexEditionTransaction, MintEditionAddresses> for E
             edition,
         ));
 
-        let blockhash = call_with_retry!(rpc.get_latest_blockhash())?;
+        let blockhash = with_retry!(rpc.get_latest_blockhash()).call()?;
 
         let message = solana_program::message::Message::new_with_blockhash(
             &instructions,
@@ -830,7 +842,7 @@ impl<'a> TransferBackend<collection_mints::Model, TransferAssetAddresses> for Un
         let recipient: Pubkey = recipient_address.parse()?;
         let mint_address: Pubkey = collection_mint.mint.parse()?;
         let payer: Pubkey = self.0.treasury_wallet_address;
-        let blockhash = call_with_retry!(rpc.get_latest_blockhash())?;
+        let blockhash = with_retry!(rpc.get_latest_blockhash()).call()?;
         let source_ata = get_associated_token_address(&sender, &mint_address);
         let destination_ata = get_associated_token_address(&recipient, &mint_address);
 
@@ -1127,8 +1139,8 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintMetaplexAddresses>
         );
         let associated_token_account = get_associated_token_address(&recipient, &mint.pubkey());
         let len = spl_token::state::Mint::LEN;
-        let rent = call_with_retry!(rpc.get_minimum_balance_for_rent_exemption(len))?;
-        let blockhash = call_with_retry!(rpc.get_latest_blockhash())?;
+        let rent = with_retry!(rpc.get_minimum_balance_for_rent_exemption(len)).call()?;
+        let blockhash = with_retry!(rpc.get_latest_blockhash()).call()?;
 
         let create_account_ins = solana_program::system_instruction::create_account(
             &payer,
