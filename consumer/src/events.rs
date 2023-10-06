@@ -546,11 +546,7 @@ impl Processor {
                         self.process_nft(
                             EventKind::RetryMintToCollection,
                             &key,
-                            self.retry_mint_to_collection(
-                                &UncompressedRef(self.solana()),
-                                &key,
-                                payload,
-                            ),
+                            self.retry_mint_to_collection(&key, payload),
                         )
                         .await
                     },
@@ -625,11 +621,7 @@ impl Processor {
                         self.process_nft(
                             EventKind::RetryMintOpenDrop,
                             &key,
-                            self.retry_mint_to_collection(
-                                &UncompressedRef(self.solana()),
-                                &key,
-                                payload,
-                            ),
+                            self.retry_mint_to_collection(&key, payload),
                         )
                         .await
                     },
@@ -1185,11 +1177,8 @@ impl Processor {
         Ok(tx.into())
     }
 
-    async fn retry_mint_to_collection<
-        B: MintBackend<MintMetaplexMetadataTransaction, MintMetaplexAddresses>,
-    >(
+    async fn retry_mint_to_collection(
         &self,
-        backend: &B,
         key: &SolanaNftEventKey,
         payload: MintMetaplexMetadataTransaction,
     ) -> ProcessResult<SolanaPendingTransaction> {
@@ -1201,6 +1190,31 @@ impl Processor {
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
         let collection = collection.ok_or(ProcessorErrorKind::RecordNotFound)?;
+
+        if payload.compressed {
+            let backend = &CompressedRef(self.solana());
+
+            let tx = backend
+                .mint(&collection, payload)
+                .map_err(ProcessorErrorKind::Solana)?;
+
+            let leaf_model = CompressionLeaf::find_by_id(conn, id)
+                .await?
+                .ok_or(ProcessorErrorKind::RecordNotFound)?;
+
+            let mut compression_leaf: compression_leafs::ActiveModel = leaf_model.into();
+
+            compression_leaf.merkle_tree = Set(tx.addresses.merkle_tree.to_string());
+            compression_leaf.tree_authority = Set(tx.addresses.tree_authority.to_string());
+            compression_leaf.tree_delegate = Set(tx.addresses.tree_delegate.to_string());
+            compression_leaf.leaf_owner = Set(tx.addresses.leaf_owner.to_string());
+
+            compression_leaf.update(conn).await?;
+
+            return Ok(tx.into());
+        }
+
+        let backend = &UncompressedRef(self.solana());
 
         let tx = backend
             .mint(&collection, payload)
