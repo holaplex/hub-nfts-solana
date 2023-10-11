@@ -269,7 +269,7 @@ impl Solana {
             message,
         };
 
-        let signature = with_retry!(self.rpc().send_and_confirm_transaction(&transaction))
+        let signature = with_retry!(self.rpc().send_transaction(&transaction))
             .when(|e| {
                 !matches!(
                     e.kind,
