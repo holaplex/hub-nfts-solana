@@ -10,9 +10,9 @@ pub struct DbArgs {
     pub max_connections: u32,
     #[arg(long, env, default_value_t = 60)]
     pub connection_timeout: u64,
-    #[arg(long, env, default_value_t = 10)]
+    #[arg(long, env, default_value_t = 60)]
     pub acquire_timeout: u64,
-    #[arg(long, env, default_value_t = 10)]
+    #[arg(long, env, default_value_t = 20)]
     pub idle_timeout: u64,
     #[arg(long, env)]
     pub database_url: String,
