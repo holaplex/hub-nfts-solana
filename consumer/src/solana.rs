@@ -71,6 +71,7 @@ macro_rules! with_retry {
                 &ExponentialBuilder::default()
                     .with_jitter()
                     .with_min_delay(Duration::from_millis(30))
+                    .with_max_delay(Duration::from_secs(1))
                     .with_max_times(25),
             )
             .notify(|err: &ClientError, dur: Duration| {
