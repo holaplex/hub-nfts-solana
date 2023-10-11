@@ -28,6 +28,7 @@ use mpl_token_metadata::{
 use solana_client::{
     client_error::{ClientError, ClientErrorKind},
     rpc_client::RpcClient as SolanaRpcClient,
+    rpc_request::RpcError,
 };
 use solana_program::{
     instruction::Instruction, program_pack::Pack, pubkey::Pubkey,
@@ -270,12 +271,12 @@ impl Solana {
         };
 
         let signature = with_retry!(self.rpc().send_transaction(&transaction))
-            .when(|e| {
-                !matches!(
-                    e.kind,
-                    ClientErrorKind::TransactionError(_) | ClientErrorKind::SigningError(_)
-                )
-            })
+        .when(|e| {
+            !matches!(e.kind, ClientErrorKind::TransactionError(_) | ClientErrorKind::SigningError(_)| ClientErrorKind::RpcError(RpcError::RpcResponseError {
+                                    data:  solana_client::rpc_request::RpcResponseErrorData::SendTransactionPreflightFailure(_),
+                                    ..
+                                }))
+        })
             .call()
             .map_err(|e| {
                 let msg = format!("failed to send transaction: {e}");
