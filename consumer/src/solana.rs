@@ -1011,10 +1011,12 @@ impl<'a> TransferBackend<compression_leafs::Model, TransferCompressedMintV1Addre
             .data(),
         }];
 
+        let blockhash = with_retry!(self.0.rpc_client.get_latest_blockhash()).await?;
+
         let serialized_message = solana_program::message::Message::new_with_blockhash(
             &instructions,
             Some(&payer),
-            &self.0.rpc_client.get_latest_blockhash().await?,
+            &blockhash,
         )
         .serialize();
 
@@ -1123,10 +1125,12 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintCompressedMintV1Addres
             .data(),
         }];
 
+        let blockhash = with_retry!(self.0.rpc_client.get_latest_blockhash()).await?;
+
         let serialized_message = solana_program::message::Message::new_with_blockhash(
             &instructions,
             Some(&payer),
-            &self.0.rpc_client.get_latest_blockhash().await?,
+            &blockhash,
         )
         .serialize();
 
