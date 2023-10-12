@@ -26,7 +26,8 @@ use mpl_token_metadata::{
     state::{Creator, DataV2, EDITION, PREFIX},
 };
 use solana_client::{
-    client_error::ClientErrorKind, nonblocking::rpc_client::RpcClient as SolanaRpcClient,
+    client_error::{ClientError, ClientErrorKind},
+    nonblocking::rpc_client::RpcClient as SolanaRpcClient,
     rpc_request::RpcError,
 };
 use solana_program::{
@@ -64,12 +65,16 @@ use crate::{
 
 macro_rules! with_retry {
     ($expr:expr) => {{
-        (|| async { $expr.await }).retry(
-            &ExponentialBuilder::default()
-                .with_jitter()
-                .with_min_delay(Duration::from_millis(30))
-                .with_max_times(15),
-        )
+        (|| async { $expr.await })
+            .retry(
+                &ExponentialBuilder::default()
+                    .with_jitter()
+                    .with_min_delay(Duration::from_millis(30))
+                    .with_max_times(15),
+            )
+            .notify(|err: &ClientError, dur: Duration| {
+                error!("retrying error {:?} in {:?}", err, dur);
+            })
     }};
 }
 
@@ -202,9 +207,10 @@ impl Solana {
         &self,
         signature: &Signature,
     ) -> Result<u32, SolanaAssetIdError> {
-        let response = with_retry!(self
-            .rpc()
-            .get_transaction(signature, UiTransactionEncoding::Json))
+        let response = with_retry!(
+            self.rpc()
+                .get_transaction(signature, UiTransactionEncoding::Json)
+        )
         .await?;
 
         let meta = response
