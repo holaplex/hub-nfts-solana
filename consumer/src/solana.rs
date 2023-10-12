@@ -9,7 +9,7 @@ use holaplex_hub_nfts_solana_entity::{
 };
 use hub_core::{
     anyhow::Result,
-    backon::{BlockingRetryable, ExponentialBuilder},
+    backon::{ExponentialBuilder, Retryable},
     bs58, clap,
     prelude::*,
     thiserror,
@@ -27,8 +27,7 @@ use mpl_token_metadata::{
 };
 use solana_client::{
     client_error::{ClientError, ClientErrorKind},
-    rpc_client::RpcClient as SolanaRpcClient,
-    rpc_config::RpcSendTransactionConfig,
+    nonblocking::rpc_client::RpcClient as SolanaRpcClient,
     rpc_request::RpcError,
 };
 use solana_program::{
@@ -66,7 +65,7 @@ use crate::{
 
 macro_rules! with_retry {
     ($expr:expr) => {{
-        (|| $expr)
+        (|| async { $expr.await })
             .retry(
                 &ExponentialBuilder::default()
                     .with_jitter()
@@ -205,7 +204,7 @@ impl Solana {
     ///
     /// # Errors
     /// This function fails if unable to query or pull the asset id from the instruction data of the transaction
-    pub fn extract_compression_nonce(
+    pub async fn extract_compression_nonce(
         &self,
         signature: &Signature,
     ) -> Result<u32, SolanaAssetIdError> {
@@ -213,7 +212,7 @@ impl Solana {
             self.rpc()
                 .get_transaction(signature, UiTransactionEncoding::Json)
         )
-        .call()?;
+        .await?;
 
         let meta = response
             .transaction
@@ -253,7 +252,10 @@ impl Solana {
     ///
     /// # Errors
     /// This function fails if unable to submit transaction to Solana
-    pub fn submit_transaction(&self, transaction: &SolanaTransactionResult) -> Result<String> {
+    pub async fn submit_transaction(
+        &self,
+        transaction: &SolanaTransactionResult,
+    ) -> Result<String> {
         let signatures = transaction
             .signed_message_signatures
             .iter()
@@ -281,7 +283,7 @@ impl Solana {
                                     ..
                                 }))
         })
-            .call()
+            .await
             .map_err(|e| {
                 let msg = format!("failed to send transaction: {e}");
                 error!(msg);
@@ -299,8 +301,9 @@ pub struct CompressedRef<'a>(pub &'a Solana);
 #[repr(transparent)]
 pub struct EditionRef<'a>(pub &'a Solana);
 
+#[async_trait]
 impl<'a> CollectionBackend for UncompressedRef<'a> {
-    fn create(
+    async fn create(
         &self,
         txn: MetaplexMasterEditionTransaction,
     ) -> hub_core::prelude::Result<TransactionResponse<MasterEditionAddresses>> {
@@ -340,8 +343,8 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
         );
         let len = spl_token::state::Mint::LEN;
 
-        let rent = with_retry!(rpc.get_minimum_balance_for_rent_exemption(len)).call()?;
-        let blockhash = with_retry!(rpc.get_latest_blockhash()).call()?;
+        let rent = with_retry!(rpc.get_minimum_balance_for_rent_exemption(len)).await?;
+        let blockhash = with_retry!(rpc.get_latest_blockhash()).await?;
 
         let create_account_ins = solana_program::system_instruction::create_account(
             &payer,
@@ -441,7 +444,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
         })
     }
 
-    fn update(
+    async fn update(
         &self,
         collection: &collections::Model,
         txn: MetaplexMasterEditionTransaction,
@@ -490,7 +493,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
             None,
         );
 
-        let blockhash = with_retry!(rpc.get_latest_blockhash()).call()?;
+        let blockhash = with_retry!(rpc.get_latest_blockhash()).await?;
 
         let message =
             solana_program::message::Message::new_with_blockhash(&[ins], Some(&payer), &blockhash);
@@ -510,7 +513,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
         })
     }
 
-    fn update_mint(
+    async fn update_mint(
         &self,
         collection: &collections::Model,
         collection_mint: &collection_mints::Model,
@@ -542,7 +545,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
             &mpl_token_metadata::ID,
         );
 
-        let blockhash = with_retry!(rpc.get_latest_blockhash()).call()?;
+        let blockhash = with_retry!(rpc.get_latest_blockhash()).await?;
 
         let update_ins: Instruction = mpl_token_metadata::instruction::update_metadata_accounts_v2(
             mpl_token_metadata::ID,
@@ -592,7 +595,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
         })
     }
 
-    fn retry_update_mint(
+    async fn retry_update_mint(
         &self,
         revision: &update_revisions::Model,
     ) -> Result<TransactionResponse<UpdateCollectionMintAddresses>> {
@@ -605,7 +608,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
         let mut message: solana_program::message::Message =
             bincode::deserialize(&revision.serialized_message)?;
 
-        let blockhash = with_retry!(rpc.get_latest_blockhash()).call()?;
+        let blockhash = with_retry!(rpc.get_latest_blockhash()).await?;
         message.recent_blockhash = blockhash;
 
         Ok(TransactionResponse {
@@ -622,7 +625,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
         })
     }
 
-    fn switch(
+    async fn switch(
         &self,
         mint: &collection_mints::Model,
         collection: &collections::Model,
@@ -690,7 +693,7 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
 
         let instructions = vec![unverify_ins, verify_ins];
 
-        let blockhash = with_retry!(rpc.get_latest_blockhash()).call()?;
+        let blockhash = with_retry!(rpc.get_latest_blockhash()).await?;
 
         let message = solana_program::message::Message::new_with_blockhash(
             &instructions,
@@ -714,8 +717,10 @@ impl<'a> CollectionBackend for UncompressedRef<'a> {
     }
 }
 
+#[async_trait]
+
 impl<'a> MintBackend<MintMetaplexEditionTransaction, MintEditionAddresses> for EditionRef<'a> {
-    fn mint(
+    async fn mint(
         &self,
         collection: &collections::Model,
         txn: MintMetaplexEditionTransaction,
@@ -761,7 +766,7 @@ impl<'a> MintBackend<MintMetaplexEditionTransaction, MintEditionAddresses> for E
         let (metadata_key, _) = Pubkey::find_program_address(metadata_seeds, &program_pubkey);
 
         let rent =
-            with_retry!(rpc.get_minimum_balance_for_rent_exemption(state::Mint::LEN)).call()?;
+            with_retry!(rpc.get_minimum_balance_for_rent_exemption(state::Mint::LEN)).await?;
 
         let mut instructions = vec![
             create_account(
@@ -799,7 +804,7 @@ impl<'a> MintBackend<MintMetaplexEditionTransaction, MintEditionAddresses> for E
             edition,
         ));
 
-        let blockhash = with_retry!(rpc.get_latest_blockhash()).call()?;
+        let blockhash = with_retry!(rpc.get_latest_blockhash()).await?;
 
         let message = solana_program::message::Message::new_with_blockhash(
             &instructions,
@@ -847,7 +852,7 @@ impl<'a> TransferBackend<collection_mints::Model, TransferAssetAddresses> for Un
         let recipient: Pubkey = recipient_address.parse()?;
         let mint_address: Pubkey = collection_mint.mint.parse()?;
         let payer: Pubkey = self.0.treasury_wallet_address;
-        let blockhash = with_retry!(rpc.get_latest_blockhash()).call()?;
+        let blockhash = with_retry!(rpc.get_latest_blockhash()).await?;
         let source_ata = get_associated_token_address(&sender, &mint_address);
         let destination_ata = get_associated_token_address(&recipient, &mint_address);
 
@@ -976,7 +981,7 @@ impl<'a> TransferBackend<compression_leafs::Model, TransferCompressedMintV1Addre
         let serialized_message = solana_program::message::Message::new_with_blockhash(
             &instructions,
             Some(&payer),
-            &self.0.rpc_client.get_latest_blockhash()?,
+            &self.0.rpc_client.get_latest_blockhash().await?,
         )
         .serialize();
 
@@ -988,10 +993,12 @@ impl<'a> TransferBackend<compression_leafs::Model, TransferCompressedMintV1Addre
     }
 }
 
+#[async_trait]
+
 impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintCompressedMintV1Addresses>
     for CompressedRef<'a>
 {
-    fn mint(
+    async fn mint(
         &self,
         collection: &collections::Model,
         txn: MintMetaplexMetadataTransaction,
@@ -1086,7 +1093,7 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintCompressedMintV1Addres
         let serialized_message = solana_program::message::Message::new_with_blockhash(
             &instructions,
             Some(&payer),
-            &self.0.rpc_client.get_latest_blockhash()?,
+            &self.0.rpc_client.get_latest_blockhash().await?,
         )
         .serialize();
 
@@ -1103,10 +1110,11 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintCompressedMintV1Addres
     }
 }
 
+#[async_trait]
 impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintMetaplexAddresses>
     for UncompressedRef<'a>
 {
-    fn mint(
+    async fn mint(
         &self,
         collection: &collections::Model,
         txn: MintMetaplexMetadataTransaction,
@@ -1144,8 +1152,8 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintMetaplexAddresses>
         );
         let associated_token_account = get_associated_token_address(&recipient, &mint.pubkey());
         let len = spl_token::state::Mint::LEN;
-        let rent = with_retry!(rpc.get_minimum_balance_for_rent_exemption(len)).call()?;
-        let blockhash = with_retry!(rpc.get_latest_blockhash()).call()?;
+        let rent = with_retry!(rpc.get_minimum_balance_for_rent_exemption(len)).await?;
+        let blockhash = with_retry!(rpc.get_latest_blockhash()).await?;
 
         let create_account_ins = solana_program::system_instruction::create_account(
             &payer,
