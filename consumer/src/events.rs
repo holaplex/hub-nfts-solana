@@ -251,7 +251,7 @@ impl EventKind {
 
                 let address = if let Some(compression_leaf) = compression_leafs {
                     let signature = Signature::from_str(&signature)?;
-                    let nonce = solana.extract_compression_nonce(&signature)?;
+                    let nonce = solana.extract_compression_nonce(&signature).await?;
 
                     let asset_id = mpl_bubblegum::utils::get_asset_id(
                         &Pubkey::from_str(&compression_leaf.merkle_tree)?,
@@ -765,7 +765,7 @@ impl Processor {
                 .map_err(|k| ProcessorError::new(k, kind, ErrorSource::TreasuryStatus));
         }
 
-        let res = match self.solana().submit_transaction(&res) {
+        let res = match self.solana().submit_transaction(&res).await {
             Ok(sig) => self
                 .event_submitted(kind, &key, sig)
                 .await
@@ -834,6 +834,7 @@ impl Processor {
         let conn = self.db.get();
         let tx = backend
             .create(payload.clone())
+            .await
             .map_err(ProcessorErrorKind::Solana)?;
 
         let MasterEditionAddresses {
@@ -880,6 +881,7 @@ impl Processor {
 
             let tx = backend
                 .mint(&collection, payload)
+                .await
                 .map_err(ProcessorErrorKind::Solana)?;
 
             let compression_leaf = compression_leafs::Model {
@@ -910,6 +912,7 @@ impl Processor {
 
         let tx = backend
             .mint(&collection, payload)
+            .await
             .map_err(ProcessorErrorKind::Solana)?;
 
         let collection_mint = collection_mints::Model {
@@ -949,6 +952,7 @@ impl Processor {
 
         let tx = backend
             .mint(&collection, payload)
+            .await
             .map_err(ProcessorErrorKind::Solana)?;
 
         let collection_mint = collection_mints::Model {
@@ -979,6 +983,7 @@ impl Processor {
 
         let tx = backend
             .update(&collection, payload)
+            .await
             .map_err(ProcessorErrorKind::Solana)?;
 
         Ok(tx.into())
@@ -1000,6 +1005,7 @@ impl Processor {
 
         let tx = backend
             .update_mint(&collection, &mint, payload)
+            .await
             .map_err(ProcessorErrorKind::Solana)?;
 
         let UpdateCollectionMintAddresses {
@@ -1035,6 +1041,7 @@ impl Processor {
 
         let tx = backend
             .retry_update_mint(&revision)
+            .await
             .map_err(ProcessorErrorKind::Solana)?;
 
         Ok(tx.into())
@@ -1083,6 +1090,7 @@ impl Processor {
         let conn = self.db.get();
         let tx = backend
             .create(payload.clone())
+            .await
             .map_err(ProcessorErrorKind::Solana)?;
 
         let MasterEditionAddresses {
@@ -1133,6 +1141,7 @@ impl Processor {
 
         let tx = backend
             .switch(&mint, &collection, &new_collection)
+            .await
             .map_err(ProcessorErrorKind::Solana)?;
 
         Ok(tx.into())
@@ -1157,6 +1166,7 @@ impl Processor {
 
         let tx = backend
             .mint(&collection, payload)
+            .await
             .map_err(ProcessorErrorKind::Solana)?;
 
         let MintEditionAddresses {
@@ -1196,6 +1206,7 @@ impl Processor {
 
             let tx = backend
                 .mint(&collection, payload)
+                .await
                 .map_err(ProcessorErrorKind::Solana)?;
 
             let leaf_model = CompressionLeaf::find_by_id(conn, id)
@@ -1218,6 +1229,7 @@ impl Processor {
 
         let tx = backend
             .mint(&collection, payload)
+            .await
             .map_err(ProcessorErrorKind::Solana)?;
 
         let MintMetaplexAddresses {
