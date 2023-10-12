@@ -12,7 +12,7 @@ use hub_core::{
     backon::{ExponentialBuilder, Retryable},
     bs58, clap,
     prelude::*,
-    thiserror,
+    thiserror, tokio,
     uuid::Uuid,
 };
 use mpl_bubblegum::state::metaplex_adapter::{
@@ -28,6 +28,7 @@ use mpl_token_metadata::{
 use solana_client::{
     client_error::{ClientError, ClientErrorKind},
     nonblocking::rpc_client::RpcClient as SolanaRpcClient,
+    rpc_client::SerializableTransaction,
     rpc_config::RpcSendTransactionConfig,
     rpc_request::RpcError,
 };
@@ -36,6 +37,7 @@ use solana_program::{
     system_instruction::create_account, system_program,
 };
 use solana_sdk::{
+    commitment_config::CommitmentConfig,
     signature::Signature,
     signer::{keypair::Keypair, Signer},
     transaction::Transaction,
@@ -290,6 +292,36 @@ impl Solana {
                 error!(msg);
                 anyhow!(msg)
             })?;
+
+        let recent_blockhash = transaction.get_recent_blockhash();
+
+        loop {
+            let signature_status = with_retry!(self.rpc().get_signature_status(&signature)).await?;
+
+            match signature_status {
+                Some(Ok(_)) => break,
+                None => {
+                    let valid_blockhash = self
+                        .rpc()
+                        .is_blockhash_valid(recent_blockhash, CommitmentConfig::processed())
+                        .await?;
+
+                    if valid_blockhash {
+                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                        continue;
+                    } else {
+                        let msg = format!("blockhash is invalid: {recent_blockhash}");
+                        error!(msg);
+                        bail!(msg)
+                    }
+                },
+                Some(Err(e)) => {
+                    let msg = format!("failed to send transaction: {e}");
+                    error!(msg);
+                    bail!(msg)
+                },
+            }
+        }
 
         Ok(signature.to_string())
     }
