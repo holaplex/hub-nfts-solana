@@ -103,31 +103,32 @@ impl<A> From<TransactionResponse<A>> for SolanaPendingTransaction {
     }
 }
 
+#[async_trait]
 pub trait CollectionBackend {
-    fn create(
+    async fn create(
         &self,
         txn: MetaplexMasterEditionTransaction,
     ) -> Result<TransactionResponse<MasterEditionAddresses>>;
 
-    fn update(
+    async fn update(
         &self,
         collection: &collections::Model,
         txn: MetaplexMasterEditionTransaction,
     ) -> Result<TransactionResponse<UpdateMasterEditionAddresses>>;
 
-    fn update_mint(
+    async fn update_mint(
         &self,
         collection: &collections::Model,
         mint: &collection_mints::Model,
         txn: UpdateSolanaMintPayload,
     ) -> Result<TransactionResponse<UpdateCollectionMintAddresses>>;
 
-    fn retry_update_mint(
+    async fn retry_update_mint(
         &self,
         revision: &update_revisions::Model,
     ) -> Result<TransactionResponse<UpdateCollectionMintAddresses>>;
 
-    fn switch(
+    async fn switch(
         &self,
         mint: &collection_mints::Model,
         collection: &collections::Model,
@@ -135,8 +136,10 @@ pub trait CollectionBackend {
     ) -> Result<TransactionResponse<SwitchCollectionAddresses>>;
 }
 
+#[async_trait]
 pub trait MintBackend<T, R> {
-    fn mint(&self, collection: &collections::Model, txn: T) -> Result<TransactionResponse<R>>;
+    async fn mint(&self, collection: &collections::Model, txn: T)
+    -> Result<TransactionResponse<R>>;
 }
 
 #[async_trait]
