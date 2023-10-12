@@ -28,6 +28,7 @@ use mpl_token_metadata::{
 use solana_client::{
     client_error::{ClientError, ClientErrorKind},
     nonblocking::rpc_client::RpcClient as SolanaRpcClient,
+    rpc_config::RpcSendTransactionConfig,
     rpc_request::RpcError,
 };
 use solana_program::{
