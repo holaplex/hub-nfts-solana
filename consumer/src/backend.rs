@@ -4,7 +4,7 @@ use holaplex_hub_nfts_solana_core::proto::{
 };
 use holaplex_hub_nfts_solana_entity::{collection_mints, collections, update_revisions};
 use hub_core::prelude::*;
-use solana_program::pubkey::Pubkey;
+use solana_program::{hash::Hash, pubkey::Pubkey};
 #[derive(Clone)]
 pub struct MasterEditionAddresses {
     pub metadata: Pubkey,
@@ -77,6 +77,8 @@ pub struct TransferAssetAddresses {
 
 /// Represents a response from a transaction on the blockchain. This struct
 /// provides the serialized message and the signatures of the signed message.
+
+#[derive(Clone)]
 pub struct TransactionResponse<A> {
     /// The serialized version of the message from the transaction.
     pub serialized_message: Vec<u8>,
@@ -138,8 +140,12 @@ pub trait CollectionBackend {
 
 #[async_trait]
 pub trait MintBackend<T, R> {
-    async fn mint(&self, collection: &collections::Model, txn: T)
-    -> Result<TransactionResponse<R>>;
+    async fn mint(
+        &self,
+        collection: &collections::Model,
+        blockhash: Option<Hash>,
+        txn: T,
+    ) -> Result<TransactionResponse<R>>;
 }
 
 #[async_trait]
@@ -147,6 +153,7 @@ pub trait TransferBackend<M, R> {
     async fn transfer(
         &self,
         collection_mint: &M,
+
         txn: TransferMetaplexAssetTransaction,
     ) -> Result<TransactionResponse<R>>;
 }

@@ -65,7 +65,7 @@ use crate::{
         UpdateMasterEditionAddresses,
     },
 };
-
+#[macro_export]
 macro_rules! with_retry {
     ($expr:expr) => {{
         (|| async { $expr.await })
@@ -81,7 +81,7 @@ macro_rules! with_retry {
             })
     }};
 }
-
+pub use with_retry;
 const TOKEN_PROGRAM_PUBKEY: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
 #[derive(Debug, clap::Args)]
@@ -201,6 +201,10 @@ impl Solana {
     #[must_use]
     pub fn rpc(&self) -> Arc<SolanaRpcClient> {
         self.rpc_client.clone()
+    }
+
+    pub fn treasury_wallet(&self) -> Pubkey {
+        self.treasury_wallet_address
     }
 
     /// Res
@@ -756,6 +760,7 @@ impl<'a> MintBackend<MintMetaplexEditionTransaction, MintEditionAddresses> for E
     async fn mint(
         &self,
         collection: &collections::Model,
+        blockhash: Option<solana_program::hash::Hash>,
         txn: MintMetaplexEditionTransaction,
     ) -> hub_core::prelude::Result<TransactionResponse<MintEditionAddresses>> {
         let rpc = &self.0.rpc_client;
@@ -837,7 +842,7 @@ impl<'a> MintBackend<MintMetaplexEditionTransaction, MintEditionAddresses> for E
             edition,
         ));
 
-        let blockhash = with_retry!(rpc.get_latest_blockhash()).await?;
+        let blockhash = blockhash.unwrap_or(with_retry!(rpc.get_latest_blockhash()).await?);
 
         let message = solana_program::message::Message::new_with_blockhash(
             &instructions,
@@ -1036,6 +1041,7 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintCompressedMintV1Addres
     async fn mint(
         &self,
         collection: &collections::Model,
+        blockhash: Option<solana_program::hash::Hash>,
         txn: MintMetaplexMetadataTransaction,
     ) -> hub_core::prelude::Result<TransactionResponse<MintCompressedMintV1Addresses>> {
         let MintMetaplexMetadataTransaction {
@@ -1125,8 +1131,8 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintCompressedMintV1Addres
             .data(),
         }];
 
-        let blockhash = with_retry!(self.0.rpc_client.get_latest_blockhash()).await?;
-
+        let blockhash =
+            blockhash.unwrap_or(with_retry!(self.0.rpc_client.get_latest_blockhash()).await?);
         let serialized_message = solana_program::message::Message::new_with_blockhash(
             &instructions,
             Some(&payer),
@@ -1154,6 +1160,7 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintMetaplexAddresses>
     async fn mint(
         &self,
         collection: &collections::Model,
+        blockhash: Option<solana_program::hash::Hash>,
         txn: MintMetaplexMetadataTransaction,
     ) -> hub_core::prelude::Result<TransactionResponse<MintMetaplexAddresses>> {
         let MintMetaplexMetadataTransaction {
@@ -1190,7 +1197,7 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintMetaplexAddresses>
         let associated_token_account = get_associated_token_address(&recipient, &mint.pubkey());
         let len = spl_token::state::Mint::LEN;
         let rent = with_retry!(rpc.get_minimum_balance_for_rent_exemption(len)).await?;
-        let blockhash = with_retry!(rpc.get_latest_blockhash()).await?;
+        let blockhash = blockhash.unwrap_or(with_retry!(rpc.get_latest_blockhash()).await?);
 
         let create_account_ins = solana_program::system_instruction::create_account(
             &payer,

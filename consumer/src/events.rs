@@ -9,7 +9,8 @@ use holaplex_hub_nfts_solana_core::{
         MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction,
         MintMetaplexMetadataTransaction, SolanaCompletedMintTransaction,
         SolanaCompletedTransferTransaction, SolanaCompletedUpdateTransaction,
-        SolanaFailedTransaction, SolanaNftEventKey, SolanaNftEvents, SolanaPendingTransaction,
+        SolanaFailedTransaction, SolanaMintBatchPayload, SolanaMintOpenDropBatchedPayload,
+        SolanaMintTransaction, SolanaNftEventKey, SolanaNftEvents, SolanaPendingTransaction,
         SolanaTransactionFailureReason, SwitchCollectionPayload, TransferMetaplexAssetTransaction,
         UpdateSolanaMintPayload,
     },
@@ -20,6 +21,8 @@ use holaplex_hub_nfts_solana_entity::{
     collection_mints, collections, compression_leafs, update_revisions,
 };
 use hub_core::{
+    anyhow,
+    backon::{ExponentialBuilder, Retryable},
     chrono::Utc,
     metrics::KeyValue,
     prelude::*,
@@ -29,6 +32,7 @@ use hub_core::{
     uuid,
     uuid::Uuid,
 };
+use solana_client::client_error::ClientError;
 use solana_program::pubkey::{ParsePubkeyError, Pubkey};
 use solana_sdk::signature::Signature;
 
@@ -39,6 +43,7 @@ use crate::{
     },
     metrics::Metrics,
     solana::{CompressedRef, EditionRef, Solana, SolanaAssetIdError, UncompressedRef},
+    with_retry,
 };
 
 #[derive(Debug, thiserror::Error, Triage)]
@@ -126,6 +131,7 @@ pub enum EventKind {
     UpdateOpenDrop,
     RetryCreateOpenDrop,
     RetryMintOpenDrop,
+    MintOpenDropBatched,
 }
 
 impl EventKind {
@@ -150,6 +156,7 @@ impl EventKind {
             Self::UpdateOpenDrop => "open drop update",
             Self::RetryCreateOpenDrop => "open drop creation retry",
             Self::RetryMintOpenDrop => "open drop mint retry",
+            Self::MintOpenDropBatched => "open drop mint batch",
         }
     }
 
@@ -190,6 +197,7 @@ impl EventKind {
                 SolanaNftEvent::RetryCreateOpenDropSigningRequested(tx)
             },
             EventKind::RetryMintOpenDrop => SolanaNftEvent::RetryMintOpenDropSigningRequested(tx),
+            EventKind::MintOpenDropBatched => unreachable!(),
         }
     }
 
@@ -390,6 +398,7 @@ impl EventKind {
                     address: collection_mint.mint,
                 })
             },
+            Self::MintOpenDropBatched => unreachable!(),
         })
     }
 
@@ -414,6 +423,7 @@ impl EventKind {
             Self::UpdateOpenDrop => SolanaNftEvent::UpdateOpenDropFailed(tx),
             Self::RetryCreateOpenDrop => SolanaNftEvent::RetryCreateOpenDropFailed(tx),
             Self::RetryMintOpenDrop => SolanaNftEvent::RetryMintOpenDropFailed(tx),
+            Self::MintOpenDropBatched => unreachable!(),
         }
     }
 }
@@ -625,6 +635,16 @@ impl Processor {
                         )
                         .await
                     },
+
+                    Some(NftEvent::SolanaMintOpenDropBatched(payload)) => {
+                        self.process_mint_batch(&key, payload).await.map_err(|e| {
+                            ProcessorError::new(
+                                ProcessorErrorKind::Solana(e),
+                                EventKind::MintOpenDropBatched,
+                                ErrorSource::NftFailure,
+                            )
+                        })
+                    },
                     _ => Ok(()),
                 }
             },
@@ -712,6 +732,142 @@ impl Processor {
                 }
             },
         }
+    }
+
+    async fn process_mint_batch(
+        &self,
+        key: &SolanaNftEventKey,
+        payload: SolanaMintOpenDropBatchedPayload,
+    ) -> anyhow::Result<()> {
+        let conn = self.db.get();
+        let producer = self.producer.clone();
+
+        let collection_id = Uuid::parse_str(&payload.collection_id)?;
+        let collection = Collection::find_by_id(conn, collection_id)
+            .await?
+            .ok_or(ProcessorErrorKind::RecordNotFound)
+            .unwrap();
+
+        let signers_pubkeys = vec![
+            self.solana().treasury_wallet().to_string(),
+            collection.owner.clone(),
+        ];
+        let blockhash = with_retry!(self.solana().rpc().get_latest_blockhash())
+            .await
+            .context("blockhash not found")
+            .map_err(ProcessorErrorKind::Solana)
+            .unwrap();
+
+        let send_event = |mint_transactions: Vec<SolanaMintTransaction>,
+                          signers_pubkeys: Vec<String>| async {
+            producer
+                .send(
+                    Some(&SolanaNftEvents {
+                        event: Some(SolanaNftEvent::MintOpenDropBatchSigningRequested(
+                            SolanaMintBatchPayload {
+                                signers_pubkeys,
+                                mint_transactions,
+                            },
+                        )),
+                    }),
+                    Some(key),
+                )
+                .await
+        };
+
+        if payload.compressed {
+            let backend = &CompressedRef(self.solana());
+            let mut leafs: Vec<compression_leafs::ActiveModel> = Vec::new();
+            let mut mint_transactions = Vec::new();
+
+            for mint_tx in payload.mint_open_drop_transactions.clone() {
+                let id = Uuid::from_str(&mint_tx.mint_id)?;
+
+                let tx = backend
+                    .mint(
+                        &collection,
+                        Some(blockhash),
+                        MintMetaplexMetadataTransaction {
+                            recipient_address: mint_tx.recipient_address,
+                            metadata: mint_tx.metadata,
+                            collection_id: payload.collection_id.clone(),
+                            compressed: payload.compressed,
+                        },
+                    )
+                    .await?;
+
+                mint_transactions.push(SolanaMintTransaction {
+                    serialized_message: tx.serialized_message,
+                    mint_id: mint_tx.mint_id,
+                    signer_signature: None,
+                });
+
+                let compression_leaf = compression_leafs::Model {
+                    id,
+                    collection_id: collection.id,
+                    merkle_tree: tx.addresses.merkle_tree.to_string(),
+                    tree_authority: tx.addresses.tree_authority.to_string(),
+                    tree_delegate: tx.addresses.tree_delegate.to_string(),
+                    leaf_owner: tx.addresses.leaf_owner.to_string(),
+                    created_at: Utc::now().naive_utc(),
+                    ..Default::default()
+                };
+
+                leafs.push(compression_leaf.into());
+            }
+
+            compression_leafs::Entity::insert_many(leafs)
+                .exec(conn)
+                .await?;
+
+            send_event(mint_transactions, signers_pubkeys).await?;
+
+            return Ok(());
+        }
+
+        let backend = &UncompressedRef(self.solana());
+        let mut mints: Vec<collection_mints::ActiveModel> = Vec::new();
+        let mut mint_transactions = Vec::new();
+
+        for mint_tx in payload.mint_open_drop_transactions.clone() {
+            let id = Uuid::from_str(&mint_tx.mint_id)?;
+            let tx = backend
+                .mint(
+                    &collection,
+                    Some(blockhash),
+                    MintMetaplexMetadataTransaction {
+                        recipient_address: mint_tx.recipient_address,
+                        metadata: mint_tx.metadata,
+                        collection_id: payload.collection_id.clone(),
+                        compressed: payload.compressed,
+                    },
+                )
+                .await?;
+
+            mint_transactions.push(SolanaMintTransaction {
+                serialized_message: tx.serialized_message,
+                mint_id: mint_tx.mint_id,
+                signer_signature: tx.signatures_or_signers_public_keys.get(1).cloned(),
+            });
+
+            let collection_mint = collection_mints::Model {
+                id,
+                collection_id: collection.id,
+                owner: tx.addresses.recipient.to_string(),
+                mint: tx.addresses.mint.to_string(),
+                created_at: Utc::now().naive_utc(),
+                associated_token_account: tx.addresses.associated_token_account.to_string(),
+            };
+
+            mints.push(collection_mint.into());
+        }
+
+        collection_mints::Entity::insert_many(mints)
+            .exec(conn)
+            .await?;
+
+        send_event(mint_transactions, signers_pubkeys).await?;
+        Ok(())
     }
 
     async fn process_nft(
@@ -880,7 +1036,7 @@ impl Processor {
             let backend = &CompressedRef(self.solana());
 
             let tx = backend
-                .mint(&collection, payload)
+                .mint(&collection, None, payload)
                 .await
                 .map_err(ProcessorErrorKind::Solana)?;
 
@@ -911,7 +1067,7 @@ impl Processor {
         let backend = &UncompressedRef(self.solana());
 
         let tx = backend
-            .mint(&collection, payload)
+            .mint(&collection, None, payload)
             .await
             .map_err(ProcessorErrorKind::Solana)?;
 
@@ -951,7 +1107,7 @@ impl Processor {
             .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
         let tx = backend
-            .mint(&collection, payload)
+            .mint(&collection, None, payload)
             .await
             .map_err(ProcessorErrorKind::Solana)?;
 
@@ -1165,7 +1321,7 @@ impl Processor {
         let collection = collection.ok_or(ProcessorErrorKind::RecordNotFound)?;
 
         let tx = backend
-            .mint(&collection, payload)
+            .mint(&collection, None, payload)
             .await
             .map_err(ProcessorErrorKind::Solana)?;
 
@@ -1205,7 +1361,7 @@ impl Processor {
             let backend = &CompressedRef(self.solana());
 
             let tx = backend
-                .mint(&collection, payload)
+                .mint(&collection, None, payload)
                 .await
                 .map_err(ProcessorErrorKind::Solana)?;
 
@@ -1228,7 +1384,7 @@ impl Processor {
         let backend = &UncompressedRef(self.solana());
 
         let tx = backend
-            .mint(&collection, payload)
+            .mint(&collection, None, payload)
             .await
             .map_err(ProcessorErrorKind::Solana)?;
 
