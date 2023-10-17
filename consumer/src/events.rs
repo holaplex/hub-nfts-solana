@@ -9,7 +9,7 @@ use holaplex_hub_nfts_solana_core::{
         MetaplexMasterEditionTransaction, MintMetaplexEditionTransaction,
         MintMetaplexMetadataTransaction, SolanaCompletedMintTransaction,
         SolanaCompletedTransferTransaction, SolanaCompletedUpdateTransaction,
-        SolanaFailedTransaction, SolanaMintBatchPayload, SolanaMintOpenDropBatchedPayload,
+        SolanaFailedTransaction, SolanaMintOpenDropBatchedPayload, SolanaMintPendingTransactions,
         SolanaMintTransaction, SolanaNftEventKey, SolanaNftEvents, SolanaPendingTransaction,
         SolanaTransactionFailureReason, SwitchCollectionPayload, TransferMetaplexAssetTransaction,
         UpdateSolanaMintPayload,
@@ -763,8 +763,8 @@ impl Processor {
             producer
                 .send(
                     Some(&SolanaNftEvents {
-                        event: Some(SolanaNftEvent::MintOpenDropBatchSigningRequested(
-                            SolanaMintBatchPayload {
+                        event: Some(SolanaNftEvent::MintOpenDropBatchedSigningRequested(
+                            SolanaMintPendingTransactions {
                                 signers_pubkeys,
                                 mint_transactions,
                             },
