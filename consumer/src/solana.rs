@@ -1197,7 +1197,11 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintMetaplexAddresses>
         let associated_token_account = get_associated_token_address(&recipient, &mint.pubkey());
         let len = spl_token::state::Mint::LEN;
         let rent = with_retry!(rpc.get_minimum_balance_for_rent_exemption(len)).await?;
-        let blockhash = blockhash.unwrap_or(with_retry!(rpc.get_latest_blockhash()).await?);
+        let blockhash = if let Some(blockhash) = blockhash {
+            blockhash
+        } else {
+            with_retry!(rpc.get_latest_blockhash()).await?
+        };
 
         let create_account_ins = solana_program::system_instruction::create_account(
             &payer,

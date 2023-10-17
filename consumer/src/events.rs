@@ -755,8 +755,7 @@ impl Processor {
         let blockhash = with_retry!(self.solana().rpc().get_latest_blockhash())
             .await
             .context("blockhash not found")
-            .map_err(ProcessorErrorKind::Solana)
-            .unwrap();
+            .map_err(ProcessorErrorKind::Solana)?;
 
         let send_event = |mint_transactions: Vec<SolanaMintTransaction>,
                           signers_pubkeys: Vec<String>| async {
