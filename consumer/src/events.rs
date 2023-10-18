@@ -21,7 +21,6 @@ use holaplex_hub_nfts_solana_entity::{
     collection_mints, collections, compression_leafs, update_revisions,
 };
 use hub_core::{
-    anyhow,
     backon::{ExponentialBuilder, Retryable},
     chrono::Utc,
     metrics::KeyValue,
@@ -635,11 +634,10 @@ impl Processor {
                         )
                         .await
                     },
-
                     Some(NftEvent::SolanaMintOpenDropBatched(payload)) => {
                         self.process_mint_batch(&key, payload).await.map_err(|e| {
                             ProcessorError::new(
-                                ProcessorErrorKind::Solana(e),
+                                e,
                                 EventKind::MintOpenDropBatched,
                                 ErrorSource::NftFailure,
                             )
@@ -738,15 +736,14 @@ impl Processor {
         &self,
         key: &SolanaNftEventKey,
         payload: SolanaMintOpenDropBatchedPayload,
-    ) -> anyhow::Result<()> {
+    ) -> ProcessResult<()> {
         let conn = self.db.get();
         let producer = self.producer.clone();
 
         let collection_id = Uuid::parse_str(&payload.collection_id)?;
         let collection = Collection::find_by_id(conn, collection_id)
             .await?
-            .ok_or(ProcessorErrorKind::RecordNotFound)
-            .unwrap();
+            .ok_or(ProcessorErrorKind::RecordNotFound)?;
 
         let signers_pubkeys = vec![
             self.solana().treasury_wallet().to_string(),
@@ -793,7 +790,8 @@ impl Processor {
                             compressed: payload.compressed,
                         },
                     )
-                    .await?;
+                    .await
+                    .map_err(ProcessorErrorKind::Solana)?;
 
                 mint_transactions.push(SolanaMintTransaction {
                     serialized_message: tx.serialized_message,
@@ -841,7 +839,8 @@ impl Processor {
                         compressed: payload.compressed,
                     },
                 )
-                .await?;
+                .await
+                .map_err(ProcessorErrorKind::Solana)?;
 
             mint_transactions.push(SolanaMintTransaction {
                 serialized_message: tx.serialized_message,
