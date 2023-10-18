@@ -223,9 +223,10 @@ impl Solana {
         .retry(
             &ExponentialBuilder::default()
                 .with_jitter()
-                .with_min_delay(Duration::from_millis(300))
-                .with_max_delay(Duration::from_secs(2))
-                .with_max_times(25),
+                .with_factor(1.5)
+                .with_min_delay(Duration::from_millis(1500))
+                .with_max_delay(Duration::from_secs(3))
+                .with_max_times(20),
         )
         .notify(|err: &ClientError, dur: Duration| {
             error!("retrying error {:?} in {:?}", err, dur);
