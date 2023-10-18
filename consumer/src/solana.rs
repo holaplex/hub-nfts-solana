@@ -215,10 +215,21 @@ impl Solana {
         &self,
         signature: &Signature,
     ) -> Result<u32, SolanaAssetIdError> {
-        let response = with_retry!(
+        let response = (|| async {
             self.rpc()
                 .get_transaction(signature, UiTransactionEncoding::Json)
+                .await
+        })
+        .retry(
+            &ExponentialBuilder::default()
+                .with_jitter()
+                .with_min_delay(Duration::from_millis(300))
+                .with_max_delay(Duration::from_secs(2))
+                .with_max_times(25),
         )
+        .notify(|err: &ClientError, dur: Duration| {
+            error!("retrying error {:?} in {:?}", err, dur);
+        })
         .await?;
 
         let meta = response
