@@ -306,6 +306,12 @@ impl Solana {
                 ClientErrorKind::TransactionError(_) | ClientErrorKind::SigningError(_)
             )
         })
+        .notify(|err: &ClientError, dur: Duration| {
+            error!(
+                "failed to send transaction retrying error {:?} in {:?}",
+                err, dur
+            );
+        })
         .await
         .map_err(|e| {
             let msg = format!("failed to send transaction: {e}");
