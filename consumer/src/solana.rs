@@ -231,7 +231,11 @@ impl Solana {
         .notify(|err: &ClientError, dur: Duration| {
             error!("retrying error {:?} in {:?}", err, dur);
         })
-        .await?;
+        .await
+        .map_err(|e| {
+            error!("failed to get transaction for signature {:?}", signature);
+            e
+        })?;
 
         let meta = response
             .transaction
@@ -335,11 +339,11 @@ impl Solana {
                     if valid_blockhash {
                         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                         continue;
-                    } else {
-                        let msg = format!("blockhash is invalid: {recent_blockhash}");
-                        error!(msg);
-                        bail!(msg)
                     }
+
+                    let msg = format!("blockhash is invalid: {recent_blockhash}");
+                    error!(msg);
+                    bail!(msg)
                 },
                 Some(Err(e)) => {
                     let msg = format!("failed to send transaction: {e}");
