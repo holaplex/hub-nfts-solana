@@ -215,11 +215,27 @@ impl Solana {
         &self,
         signature: &Signature,
     ) -> Result<u32, SolanaAssetIdError> {
-        let response = with_retry!(
+        let response = (|| async {
             self.rpc()
                 .get_transaction(signature, UiTransactionEncoding::Json)
+                .await
+        })
+        .retry(
+            &ExponentialBuilder::default()
+                .with_jitter()
+                .with_factor(1.5)
+                .with_min_delay(Duration::from_secs(2))
+                .with_max_delay(Duration::from_secs(5))
+                .with_max_times(20),
         )
-        .await?;
+        .notify(|err: &ClientError, dur: Duration| {
+            error!("retrying error {:?} in {:?}", err, dur);
+        })
+        .await
+        .map_err(|e| {
+            error!("failed to get transaction for signature {:?}", signature);
+            e
+        })?;
 
         let meta = response
             .transaction
@@ -281,21 +297,31 @@ impl Solana {
             message,
         };
 
-        let signature = with_retry!(self.rpc().send_transaction_with_config(&transaction, RpcSendTransactionConfig {
-            skip_preflight: true, ..Default::default()
-        }))
+        let signature = with_retry!(self.rpc().send_transaction_with_config(
+            &transaction,
+            RpcSendTransactionConfig {
+                skip_preflight: true,
+                ..Default::default()
+            }
+        ))
         .when(|e| {
-            !matches!(e.kind, ClientErrorKind::TransactionError(_) | ClientErrorKind::SigningError(_)| ClientErrorKind::RpcError(RpcError::RpcResponseError {
-                                    data:  solana_client::rpc_request::RpcResponseErrorData::SendTransactionPreflightFailure(_),
-                                    ..
-                                }))
+            !matches!(
+                e.kind,
+                ClientErrorKind::TransactionError(_) | ClientErrorKind::SigningError(_)
+            )
         })
-            .await
-            .map_err(|e| {
-                let msg = format!("failed to send transaction: {e}");
-                error!(msg);
-                anyhow!(msg)
-            })?;
+        .notify(|err: &ClientError, dur: Duration| {
+            error!(
+                "failed to send transaction retrying error {:?} in {:?}",
+                err, dur
+            );
+        })
+        .await
+        .map_err(|e| {
+            let msg = format!("failed to send transaction: {e}");
+            error!(msg);
+            anyhow!(msg)
+        })?;
 
         let recent_blockhash = transaction.get_recent_blockhash();
 
@@ -307,17 +333,17 @@ impl Solana {
                 None => {
                     let valid_blockhash = self
                         .rpc()
-                        .is_blockhash_valid(recent_blockhash, CommitmentConfig::processed())
+                        .is_blockhash_valid(recent_blockhash, CommitmentConfig::finalized())
                         .await?;
 
                     if valid_blockhash {
                         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                         continue;
-                    } else {
-                        let msg = format!("blockhash is invalid: {recent_blockhash}");
-                        error!(msg);
-                        bail!(msg)
                     }
+
+                    let msg = format!("blockhash is invalid: {recent_blockhash}");
+                    error!(msg);
+                    bail!(msg)
                 },
                 Some(Err(e)) => {
                     let msg = format!("failed to send transaction: {e}");
@@ -842,7 +868,11 @@ impl<'a> MintBackend<MintMetaplexEditionTransaction, MintEditionAddresses> for E
             edition,
         ));
 
-        let blockhash = blockhash.unwrap_or(with_retry!(rpc.get_latest_blockhash()).await?);
+        let blockhash = if let Some(blockhash) = blockhash {
+            blockhash
+        } else {
+            with_retry!(rpc.get_latest_blockhash()).await?
+        };
 
         let message = solana_program::message::Message::new_with_blockhash(
             &instructions,
@@ -1131,8 +1161,12 @@ impl<'a> MintBackend<MintMetaplexMetadataTransaction, MintCompressedMintV1Addres
             .data(),
         }];
 
-        let blockhash =
-            blockhash.unwrap_or(with_retry!(self.0.rpc_client.get_latest_blockhash()).await?);
+        let blockhash = if let Some(blockhash) = blockhash {
+            blockhash
+        } else {
+            with_retry!(self.0.rpc().get_latest_blockhash()).await?
+        };
+
         let serialized_message = solana_program::message::Message::new_with_blockhash(
             &instructions,
             Some(&payer),
