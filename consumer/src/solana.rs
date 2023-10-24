@@ -37,7 +37,7 @@ use solana_program::{
     system_instruction::create_account, system_program,
 };
 use solana_sdk::{
-    commitment_config::CommitmentConfig,
+    commitment_config::{CommitmentConfig, CommitmentLevel},
     signature::Signature,
     signer::{keypair::Keypair, Signer},
     transaction::Transaction,
@@ -174,7 +174,12 @@ impl Solana {
             tree_authority,
             merkle_tree,
         } = args;
-        let rpc_client = Arc::new(SolanaRpcClient::new(solana_endpoint));
+        let rpc_client = Arc::new(SolanaRpcClient::new_with_commitment(
+            solana_endpoint,
+            CommitmentConfig {
+                commitment: CommitmentLevel::Confirmed,
+            },
+        ));
 
         let (bubblegum_cpi_address, _) = Pubkey::find_program_address(
             &[mpl_bubblegum::state::COLLECTION_CPI_PREFIX.as_bytes()],
@@ -327,7 +332,7 @@ impl Solana {
                 None => {
                     let valid_blockhash = self
                         .rpc()
-                        .is_blockhash_valid(recent_blockhash, CommitmentConfig::finalized())
+                        .is_blockhash_valid(recent_blockhash, CommitmentConfig::confirmed())
                         .await?;
 
                     if valid_blockhash {
