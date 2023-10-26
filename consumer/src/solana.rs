@@ -297,25 +297,31 @@ impl Solana {
             message,
         };
 
-        let signature = with_retry!(self.rpc().send_transaction(&transaction))
-            .when(|e| {
-                !matches!(
-                    e.kind,
-                    ClientErrorKind::TransactionError(_) | ClientErrorKind::SigningError(_)
-                )
-            })
-            .notify(|err: &ClientError, dur: Duration| {
-                error!(
-                    "failed to send transaction retrying error {:?} in {:?}",
-                    err, dur
-                );
-            })
-            .await
-            .map_err(|e| {
-                let msg = format!("failed to send transaction: {e}");
-                error!(msg);
-                anyhow!(msg)
-            })?;
+        let signature = with_retry!(self.rpc().send_transaction_with_config(
+            &transaction,
+            RpcSendTransactionConfig {
+                skip_preflight: true,
+                ..Default::default()
+            }
+        ))
+        .when(|e| {
+            !matches!(
+                e.kind,
+                ClientErrorKind::TransactionError(_) | ClientErrorKind::SigningError(_)
+            )
+        })
+        .notify(|err: &ClientError, dur: Duration| {
+            error!(
+                "failed to send transaction retrying error {:?} in {:?}",
+                err, dur
+            );
+        })
+        .await
+        .map_err(|e| {
+            let msg = format!("failed to send transaction: {e}");
+            error!(msg);
+            anyhow!(msg)
+        })?;
 
         let recent_blockhash = transaction.get_recent_blockhash();
 
